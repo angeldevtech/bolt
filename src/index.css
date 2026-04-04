@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+@layer base {
+    body {
+        @apply bg-zinc-950 text-zinc-100 antialiased h-screen w-screen overflow-hidden select-none;
+    }
+
+    #root {
+        @apply h-full flex flex-col;
+    }
+
+    input {
+        @apply select-text;
+    }
+}

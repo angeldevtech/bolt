@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Bun
+.bun/
+bun.lockb
+
+# Build outputs (frontend)
+dist/
+.vite/
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/**/*.rs.bk
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Env files
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# Misc
+*.tsbuildinfo
