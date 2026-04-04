@@ -1,8 +1,30 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
+
+@theme {
+    --font-sans: "Inter", sans-serif;
+
+    --color-app-bg: #0c0e12;
+    --color-surface-lowest: #000000;
+    --color-surface-low: #16181d;
+    --color-surface-high: #1e2025;
+    --color-surface-highest: #23262c;
+    --color-surface-bright: #2d3038;
+
+    --color-primary: #a7a5ff;
+    --color-primary-dim: #645efb;
+    --color-secondary: #a98ffd;
+    --color-tertiary: #ff9dd1;
+
+    --color-on-surface: #f6f6fc;
+    --color-on-surface-muted: #8a8d98;
+
+    --color-outline-variant: rgba(70, 72, 77, 0.15);
+}
 
 @layer base {
     body {
-        @apply bg-zinc-950 text-zinc-100 antialiased h-screen w-screen overflow-hidden select-none;
+        @apply bg-app-bg text-on-surface antialiased h-screen w-screen overflow-hidden select-none font-sans;
     }
 
     #root {
@@ -11,5 +33,40 @@
 
     input {
         @apply select-text;
+    }
+}
+
+/* Custom utilities for the Design System */
+@layer utilities {
+    .text-display-lg {
+        @apply text-[3.5rem] leading-none tracking-tight font-bold;
+    }
+    .text-label-sm {
+        @apply text-[0.6875rem] uppercase tracking-[0.05em] font-semibold;
+    }
+    .ghost-border {
+        @apply border border-outline-variant;
+    }
+    .glass-panel {
+        @apply bg-white/2 backdrop-blur-[20px];
+    }
+
+    /* minimal dark scrollbar */
+    .custom-scrollbar {
+        scrollbar-width: thin;
+        scrollbar-color: var(--color-surface-highest) transparent;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+        width: 14px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+        background-color: var(--color-surface-highest);
+        border-radius: 9999px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background-color: var(--color-on-surface-muted);
     }
 }
