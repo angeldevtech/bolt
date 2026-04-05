@@ -18,3 +18,25 @@ export interface IAppSettings {
   audioFolder: string;
   maxConcurrent: number;
 }
+
+export interface IProgressPayload {
+  id: string;
+  progress: number;
+}
+
+export interface ICompletePayload {
+  id: string;
+  filePath: string;
+  sizeMB: number;
+}
+
+export interface IErrorPayload {
+  id: string;
+  errorMsg: string;
+}
+
+// A standard response wrapper for API calls
+export interface IActionResult {
+  success: boolean;
+  error?: string;
+}

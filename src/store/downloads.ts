@@ -1,43 +1,47 @@
-import { createStore, produce } from "solid-js/store";
-import type { DownloadItem, Format } from "../types";
+import { createStore } from "solid-js/store";
+import { loadHistorySafe, saveHistory } from "../lib/api";
+import { showAlert } from "../components/ui/Toaster";
+import type { IDownloadItem } from "../types";
 
-const [downloads, setDownloads] = createStore<DownloadItem[]>([]);
+export const [downloads, setDownloads] = createStore<IDownloadItem[]>([]);
 
-export const downloadStore = {
-  downloads,
+export const initDownloads = async () => {
+  const result = await loadHistorySafe();
+  setDownloads(result.data);
 
-  addDownload: (url: string, format: Format) => {
-    const id = crypto.randomUUID();
-    setDownloads(
-      produce((list) => {
-        list.push({
-          id,
-          url,
-          title: "Fetching info...",
-          format,
-          status: "pending",
-          progress: 0,
-        });
-      }),
+  if (result.wasCorrupted) {
+    showAlert(
+      "Historial Restaurado",
+      "El historial de descargas estaba dañado y ha sido reiniciado.",
+      "error",
     );
-    return id;
-  },
+  }
+};
 
-  updateProgress: (id: string, progress: number) => {
-    setDownloads((d) => d.id === id, "progress", progress);
-    setDownloads((d) => d.id === id, "status", "downloading");
-  },
+export const addDownload = async (item: IDownloadItem) => {
+  // Put new downloads at the top of the list
+  setDownloads((prev) => [item, ...prev]);
+  // Save to disk immediately so if it crashes, we don't lose the record
+  await saveHistory(downloads);
+};
 
-  updateStatus: (
-    id: string,
-    status: DownloadItem["status"],
-    errorMsg?: string,
-  ) => {
-    setDownloads((d) => d.id === id, "status", status);
-    if (errorMsg) setDownloads((d) => d.id === id, "errorMsg", errorMsg);
-  },
+export const updateDownloadStatus = async (
+  id: string,
+  updates: Partial<IDownloadItem>,
+) => {
+  setDownloads(
+    (d) => d.id === id,
+    (d) => ({ ...d, ...updates }),
+  );
 
-  removeDownload: (id: string) => {
-    setDownloads(downloads.filter((d) => d.id !== id));
-  },
+  // Only save to disk on major status changes (completed/error),
+  // NOT on every single progress tick (1%, 2%, 3%), to avoid killing the SSD/disk.
+  if (updates.status === "completed" || updates.status === "error") {
+    await saveHistory(downloads);
+  }
+};
+
+export const removeDownload = async (id: string) => {
+  setDownloads((prev) => prev.filter((d) => d.id !== id));
+  await saveHistory(downloads);
 };

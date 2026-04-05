@@ -96,7 +96,7 @@ export function DownloadItem(props: Props) {
           {isCompleted() && <span class="text-primary">COMPLETADO</span>}
           {isError() && (
             <span
-              class="text-red-400 truncate max-w-50"
+              class="text-red-400 truncate max-w-full"
               title={props.item.errorMsg || "ERROR"}
             >
               {props.item.errorMsg || "ERROR DE RED"}
