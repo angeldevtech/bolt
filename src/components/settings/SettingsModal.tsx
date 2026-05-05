@@ -1,8 +1,12 @@
-import { createSignal } from "solid-js";
+import { createSignal, createEffect } from "solid-js";
 import { Dialog } from "@kobalte/core/dialog";
 import { X, FolderSearch, AlertTriangle, Save } from "lucide-solid";
 import { Button } from "../ui/Button";
 import { showAlert } from "../ui/Toaster";
+
+// Import our API and Store
+import { promptForFolder } from "../../lib/api";
+import { settings, updateAllSettings } from "../../store/settings";
 
 interface Props {
   isOpen: boolean;
@@ -10,15 +14,44 @@ interface Props {
 }
 
 export function SettingsModal(props: Props) {
-  const [audioPath, setAudioPath] = createSignal("C:\\Users\\Usuario\\Music");
-  const [videoPath, setVideoPath] = createSignal("C:\\Users\\Usuario\\Videos");
+  // Local "draft" state
+  const [audioPath, setAudioPath] = createSignal("");
+  const [videoPath, setVideoPath] = createSignal("");
   const [maxConcurrent, setMaxConcurrent] = createSignal(1);
 
-  const handleSave = () => {
+  // Sync the global settings to local draft state EVERY TIME the modal opens
+  createEffect(() => {
+    if (props.isOpen) {
+      setAudioPath(settings.audioFolder);
+      setVideoPath(settings.videoFolder);
+      setMaxConcurrent(settings.maxConcurrent);
+    }
+  });
+
+  // Handlers for picking folders via Tauri OS Dialog
+  const handlePickAudio = async () => {
+    const path = await promptForFolder(audioPath());
+    if (path) setAudioPath(path);
+  };
+
+  const handlePickVideo = async () => {
+    const path = await promptForFolder(videoPath());
+    if (path) setVideoPath(path);
+  };
+
+  // Explicit Save
+  const handleSave = async () => {
+    // Write draft state to global store and persist to disk
+    await updateAllSettings({
+      audioFolder: audioPath(),
+      videoFolder: videoPath(),
+      maxConcurrent: maxConcurrent(),
+    });
+
     props.onOpenChange(false);
     showAlert(
       "Ajustes Guardados",
-      "Tu configuración ha sido actualizada correctamente.",
+      "Los cambios se aplicarán a las nuevas descargas.", // Clear UX feedback
       "success",
     );
   };
@@ -58,11 +91,12 @@ export function SettingsModal(props: Props) {
                       type="text"
                       readOnly
                       value={audioPath()}
-                      class="flex-1 bg-surface-lowest ghost-border rounded-xl px-4 py-2.5 text-sm text-on-surface outline-none"
+                      class="flex-1 bg-surface-lowest ghost-border rounded-xl px-4 py-2.5 text-sm text-on-surface outline-none cursor-default"
                     />
                     <button
+                      onClick={handlePickAudio}
                       class="bg-surface-highest hover:bg-surface-bright text-white p-2.5 rounded-xl transition-colors shrink-0"
-                      title="Explorar"
+                      title="Cambiar carpeta de audio"
                     >
                       <FolderSearch size={18} />
                     </button>
@@ -79,11 +113,12 @@ export function SettingsModal(props: Props) {
                       type="text"
                       readOnly
                       value={videoPath()}
-                      class="flex-1 bg-surface-lowest ghost-border rounded-xl px-4 py-2.5 text-sm text-on-surface outline-none"
+                      class="flex-1 bg-surface-lowest ghost-border rounded-xl px-4 py-2.5 text-sm text-on-surface outline-none cursor-default"
                     />
                     <button
+                      onClick={handlePickVideo}
                       class="bg-surface-highest hover:bg-surface-bright text-white p-2.5 rounded-xl transition-colors shrink-0"
-                      title="Explorar"
+                      title="Cambiar carpeta de video"
                     >
                       <FolderSearch size={18} />
                     </button>
@@ -105,7 +140,11 @@ export function SettingsModal(props: Props) {
                     <div class="flex items-center bg-surface-lowest rounded-lg p-1 ghost-border">
                       {[1, 2, 3, 4].map((num) => (
                         <button
-                          class={`w-8 h-8 rounded-md flex items-center justify-center text-sm font-bold transition-all ${maxConcurrent() === num ? "bg-primary text-white shadow-md" : "text-on-surface-muted hover:text-white"}`}
+                          class={`w-8 h-8 rounded-md flex items-center justify-center text-sm font-bold transition-all ${
+                            maxConcurrent() === num
+                              ? "bg-primary text-white shadow-md"
+                              : "text-on-surface-muted hover:text-white"
+                          }`}
                           onClick={() => setMaxConcurrent(num)}
                         >
                           {num}
@@ -135,7 +174,7 @@ export function SettingsModal(props: Props) {
               <Button
                 variant="surface"
                 class="px-5 py-2.5 text-xs"
-                onClick={() => props.onOpenChange(false)}
+                onClick={() => props.onOpenChange(false)} // Just closes, discards draft state
               >
                 CANCELAR
               </Button>

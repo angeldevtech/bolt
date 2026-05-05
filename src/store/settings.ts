@@ -7,11 +7,12 @@ import type { IAppSettings } from "../types";
 export const [settings, setSettings] = createStore<IAppSettings>({
   audioFolder: "",
   videoFolder: "",
-  maxConcurrent: 2,
+  maxConcurrent: 1,
 });
 
 export const initSettings = async () => {
   const result = await loadSettingsSafe();
+  console.log(result);
   setSettings(result.data);
 
   if (result.wasCorrupted) {
@@ -23,12 +24,13 @@ export const initSettings = async () => {
   }
 };
 
-export const updateSetting = async <K extends keyof IAppSettings>(
-  key: K,
-  value: IAppSettings[K],
-) => {
-  setSettings(key, value);
-  await saveSettings(settings); // Assume saveSettings is updated to handle just the save part
+export const updateAllSettings = async (newSettings: IAppSettings) => {
+  setSettings(newSettings);
+  const result = await saveSettings(newSettings);
+
+  if (!result.success) {
+    showAlert("Error al guardar", result.error, "error");
+  }
 };
 
 // Expose a helper for the UI folder buttons
