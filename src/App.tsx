@@ -1,4 +1,4 @@
-import { createSignal, onMount } from "solid-js";
+import { createSignal, onMount, lazy, Suspense } from "solid-js";
 import { FileMusic, FilePlay, Hd } from "lucide-solid";
 import { UrlInput } from "./components/ui/UrlInput";
 import { Button } from "./components/ui/Button";
@@ -7,9 +7,9 @@ import { DownloadList } from "./components/downloads/DownloadList";
 import { SettingsModal } from "./components/settings/SettingsModal";
 import { GlobalToaster, showAlert } from "./components/ui/Toaster";
 import { pasteFromClipboard, checkYtDlpUpdate } from "./lib/api";
-import { UpdateModal } from "./components/update/UpdateModal";
 import { initSettings } from "./store/settings";
 import { initDownloads, downloads } from "./store/downloads";
+const UpdateModal = lazy(() => import("./components/update/UpdateModal"));
 
 export default function App() {
   const [url, setUrl] = createSignal("");
@@ -104,12 +104,16 @@ export default function App() {
       />
 
       {/* Render Update Modal */}
-      <UpdateModal
-        isOpen={isUpdateModalOpen()}
-        onOpenChange={setIsUpdateModalOpen}
-        hasActiveDownloads={hasActiveDownloads()}
-        onUpdateSuccess={() => setIsUpdateAvailable(false)} // Hides button after success
-      />
+      <Suspense>
+        {isUpdateModalOpen() && (
+          <UpdateModal
+            isOpen={isUpdateModalOpen()}
+            onOpenChange={setIsUpdateModalOpen}
+            hasActiveDownloads={hasActiveDownloads()}
+            onUpdateSuccess={() => setIsUpdateAvailable(false)}
+          />
+        )}
+      </Suspense>
 
       {/* Footer to open Settings */}
       <Footer
