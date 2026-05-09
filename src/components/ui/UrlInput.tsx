@@ -1,12 +1,12 @@
 import { Link, ClipboardPaste } from "lucide-solid";
 
-interface UrlInputProps {
+interface IUrlInputProps {
   value: string;
   onInput: (value: string) => void;
   onPasteClick: () => void;
 }
 
-export function UrlInput(props: UrlInputProps) {
+export function UrlInput(props: IUrlInputProps) {
   return (
     <div class="relative flex items-center w-full">
       <div class="absolute left-4 text-on-surface-muted">

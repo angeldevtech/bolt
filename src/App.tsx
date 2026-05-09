@@ -1,5 +1,5 @@
 import { createSignal, onMount } from "solid-js";
-import { FileAudio, FileVideo, MonitorPlay } from "lucide-solid";
+import { FileMusic, FilePlay, Hd } from "lucide-solid";
 import { UrlInput } from "./components/ui/UrlInput";
 import { Button } from "./components/ui/Button";
 import { Footer } from "./components/layout/Footer";
@@ -13,7 +13,7 @@ import { initDownloads, downloads } from "./store/downloads";
 
 export default function App() {
   const [url, setUrl] = createSignal("");
-  const [isSettingsOpen, setIsSettingsOpen] = createSignal(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = createSignal(false);
   const [isUpdateAvailable, setIsUpdateAvailable] = createSignal(false);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = createSignal(false);
 
@@ -46,6 +46,7 @@ export default function App() {
       );
       return;
     }
+    // TODO replace with the actual code
     showAlert(
       "Descarga Iniciada",
       `Añadido a la cola en formato ${format.toUpperCase()}`,
@@ -62,7 +63,7 @@ export default function App() {
 
           <div class="grid grid-cols-3 gap-3">
             <Button variant="gradient" onClick={() => handleDownload("mp3")}>
-              <FileAudio
+              <FileMusic
                 size={20}
                 class="group-hover:scale-110 transition-transform"
               />
@@ -72,7 +73,7 @@ export default function App() {
             </Button>
 
             <Button variant="gradient" onClick={() => handleDownload("mp4")}>
-              <FileVideo
+              <FilePlay
                 size={20}
                 class="group-hover:scale-110 transition-transform"
               />
@@ -82,7 +83,7 @@ export default function App() {
             </Button>
 
             <Button variant="gradient" onClick={() => handleDownload("mp4-hd")}>
-              <MonitorPlay
+              <Hd
                 size={20}
                 class="group-hover:scale-110 transition-transform"
               />
@@ -96,12 +97,13 @@ export default function App() {
         <DownloadList downloads={downloads} />
       </main>
 
-      {/* Render Settings Dialog & pass the signal state */}
+      {/* Render Settings Modal */}
       <SettingsModal
-        isOpen={isSettingsOpen()}
-        onOpenChange={setIsSettingsOpen}
+        isOpen={isSettingsModalOpen()}
+        onOpenChange={setIsSettingsModalOpen}
       />
 
+      {/* Render Update Modal */}
       <UpdateModal
         isOpen={isUpdateModalOpen()}
         onOpenChange={setIsUpdateModalOpen}
@@ -111,7 +113,7 @@ export default function App() {
 
       {/* Footer to open Settings */}
       <Footer
-        onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenSettings={() => setIsSettingsModalOpen(true)}
         isUpdateAvailable={isUpdateAvailable()}
         onOpenUpdate={() => setIsUpdateModalOpen(true)}
       />

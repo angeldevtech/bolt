@@ -11,11 +11,11 @@ import {
 import { type IDownloadItem } from "../../types";
 import { Button } from "../ui/Button";
 
-interface Props {
+interface IDownloadItemProps {
   item: IDownloadItem;
 }
 
-export function DownloadItem(props: Props) {
+export function DownloadItem(props: IDownloadItemProps) {
   const isPending = () => props.item.status === "pending";
   const isDownloading = () => props.item.status === "downloading";
   const isCompleted = () => props.item.status === "completed";

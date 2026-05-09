@@ -1,5 +1,5 @@
 import { Toast, toaster } from "@kobalte/core/toast";
-import { X, AlertCircle, CheckCircle2, Info } from "lucide-solid";
+import { X, CircleAlert, CircleCheck, Info } from "lucide-solid";
 
 export function showAlert(
   title: string,
@@ -12,8 +12,8 @@ export function showAlert(
       class="relative overflow-hidden bg-surface-low border border-surface-high rounded-xl p-4 shadow-[0_8px_32px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.06)] flex items-start gap-3 w-80 data-opened:animate-in data-closed:animate-out data-[opened]:fade-in data-[closed]:fade-out data-[opened]:slide-in-from-bottom-5"
     >
       <div class="shrink-0 mt-0.5 z-10">
-        {type === "success" && <CheckCircle2 size={18} class="text-primary" />}
-        {type === "error" && <AlertCircle size={18} class="text-red-400" />}
+        {type === "success" && <CircleCheck size={18} class="text-primary" />}
+        {type === "error" && <CircleAlert size={18} class="text-red-400" />}
         {type === "info" && <Info size={18} class="text-blue-400" />}
       </div>
 
@@ -32,7 +32,6 @@ export function showAlert(
         <X size={16} />
       </Toast.CloseButton>
 
-      {/* The Kinetic visual timer bar at the bottom */}
       <Toast.ProgressTrack class="absolute bottom-0 left-0 right-0 h-1 w-full bg-surface-highest">
         <Toast.ProgressFill
           class="h-full bg-primary transition-[width] duration-100 ease-linear"

@@ -1,27 +1,26 @@
 import { createSignal, createEffect, createMemo, For } from "solid-js";
 import { Dialog } from "@kobalte/core/dialog";
-import { X, FolderSearch, AlertTriangle, Save } from "lucide-solid";
+import { X, FolderSearch, TriangleAlert, Save } from "lucide-solid";
 import { Button } from "../ui/Button";
 import { showAlert } from "../ui/Toaster";
 import {
   DEFAULT_MAX_CONCURRENT,
   DOWNLOAD_CONCURRENCY_OPTIONS,
 } from "../../constants";
-
-// Import our API and Store
 import { promptForFolder } from "../../lib/api";
 import { settings, updateAllSettings } from "../../store/settings";
 
-interface Props {
+interface ISettingsModalProps {
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
 }
 
-export function SettingsModal(props: Props) {
-  // Local "draft" state
+export function SettingsModal(props: ISettingsModalProps) {
   const [audioPath, setAudioPath] = createSignal("");
   const [videoPath, setVideoPath] = createSignal("");
-  const [maxConcurrent, setMaxConcurrent] = createSignal(DEFAULT_MAX_CONCURRENT);
+  const [maxConcurrent, setMaxConcurrent] = createSignal(
+    DEFAULT_MAX_CONCURRENT,
+  );
   const [isDiscardConfirmOpen, setIsDiscardConfirmOpen] = createSignal(false);
 
   const draftSettings = createMemo(() => ({
@@ -224,7 +223,7 @@ export function SettingsModal(props: Props) {
                   </div>
 
                   <div class="flex items-start gap-3 bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">
-                    <AlertTriangle
+                    <TriangleAlert
                       size={16}
                       class="text-amber-500 shrink-0 mt-0.5"
                     />
@@ -266,7 +265,8 @@ export function SettingsModal(props: Props) {
                       Tienes cambios sin guardar
                     </h3>
                     <p class="mt-1 text-sm text-amber-100/80">
-                      Antes de cerrar, elige si quieres guardarlos o descartarlos.
+                      Antes de cerrar, elige si quieres guardarlos o
+                      descartarlos.
                     </p>
                   </div>
 

@@ -1,18 +1,18 @@
 import { createSignal, Show } from "solid-js";
 import { Dialog } from "@kobalte/core/dialog";
-import { X, AlertTriangle, DownloadCloud, Loader2 } from "lucide-solid";
+import { X, TriangleAlert, CloudDownload, LoaderCircle } from "lucide-solid";
 import { Button } from "../ui/Button";
 import { showAlert } from "../ui/Toaster";
 import { performYtDlpUpdate } from "../../lib/api";
 
-interface Props {
+interface IUpdateModalProps {
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
   hasActiveDownloads: boolean;
   onUpdateSuccess: () => void;
 }
 
-export function UpdateModal(props: Props) {
+export function UpdateModal(props: IUpdateModalProps) {
   const [isUpdating, setIsUpdating] = createSignal(false);
 
   const handleUpdate = async () => {
@@ -20,7 +20,6 @@ export function UpdateModal(props: Props) {
 
     setIsUpdating(true);
 
-    // Call our Rust API
     const result = await performYtDlpUpdate();
 
     setIsUpdating(false);
@@ -31,8 +30,8 @@ export function UpdateModal(props: Props) {
         "El motor de descargas está en su última versión.",
         "success",
       );
-      props.onUpdateSuccess(); // Tells App.tsx to hide the update button
-      props.onOpenChange(false); // Close the modal
+      props.onUpdateSuccess();
+      props.onOpenChange(false);
     } else {
       showAlert(
         "Error al actualizar",
@@ -58,8 +57,8 @@ export function UpdateModal(props: Props) {
             {/* Header */}
             <div class="flex items-center justify-between px-6 py-4 border-b border-surface-high bg-surface-highest/50">
               <Dialog.Title class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
-                <DownloadCloud size={20} class="text-primary" />
-                Actualizar Motor
+                <CloudDownload size={20} class="text-primary" />
+                Actualizar yt-dlp
               </Dialog.Title>
 
               {/* Hide close button during update to prevent accidental clicks */}
@@ -76,7 +75,7 @@ export function UpdateModal(props: Props) {
                 when={!isUpdating()}
                 fallback={
                   <div class="flex flex-col items-center gap-4 py-4">
-                    <Loader2 size={48} class="text-primary animate-spin" />
+                    <LoaderCircle size={48} class="text-primary animate-spin" />
                     <p class="text-sm font-semibold text-white">
                       Descargando e instalando actualización...
                     </p>
@@ -88,14 +87,14 @@ export function UpdateModal(props: Props) {
               >
                 <p class="text-sm text-on-surface-muted leading-relaxed">
                   Hay una nueva versión disponible para el motor de descargas.
-                  Es recomendable actualizar para asegurar que los enlaces sigan
-                  funcionando correctamente.
+                  Es recomendable actualizar para asegurar que las descargas
+                  sigan funcionando correctamente.
                 </p>
 
                 {/* Warning if downloads are running */}
                 <Show when={props.hasActiveDownloads}>
                   <div class="flex items-start gap-3 bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 w-full text-left">
-                    <AlertTriangle
+                    <TriangleAlert
                       size={18}
                       class="text-amber-500 shrink-0 mt-0.5"
                     />

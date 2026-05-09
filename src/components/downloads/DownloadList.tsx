@@ -2,11 +2,11 @@ import { ListFilter } from "lucide-solid";
 import { DownloadItem } from "./DownloadItem";
 import { type IDownloadItem } from "../../types";
 
-interface Props {
+interface IDownloadListProps {
   downloads: IDownloadItem[];
 }
 
-export function DownloadList(props: Props) {
+export function DownloadList(props: IDownloadListProps) {
   return (
     <section class="flex-1 flex flex-col min-h-0">
       <div class="flex items-center justify-between pb-3 shrink-0 border-b border-surface-low mb-3">
