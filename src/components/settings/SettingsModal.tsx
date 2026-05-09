@@ -1,8 +1,12 @@
-import { createSignal, createEffect } from "solid-js";
+import { createSignal, createEffect, createMemo, For } from "solid-js";
 import { Dialog } from "@kobalte/core/dialog";
 import { X, FolderSearch, AlertTriangle, Save } from "lucide-solid";
 import { Button } from "../ui/Button";
 import { showAlert } from "../ui/Toaster";
+import {
+  DEFAULT_MAX_CONCURRENT,
+  DOWNLOAD_CONCURRENCY_OPTIONS,
+} from "../../constants";
 
 // Import our API and Store
 import { promptForFolder } from "../../lib/api";
@@ -17,16 +21,74 @@ export function SettingsModal(props: Props) {
   // Local "draft" state
   const [audioPath, setAudioPath] = createSignal("");
   const [videoPath, setVideoPath] = createSignal("");
-  const [maxConcurrent, setMaxConcurrent] = createSignal(1);
+  const [maxConcurrent, setMaxConcurrent] = createSignal(DEFAULT_MAX_CONCURRENT);
+  const [isDiscardConfirmOpen, setIsDiscardConfirmOpen] = createSignal(false);
+
+  const draftSettings = createMemo(() => ({
+    audioFolder: audioPath(),
+    videoFolder: videoPath(),
+    maxConcurrent: maxConcurrent(),
+  }));
+
+  const hasUnsavedChanges = createMemo(
+    () =>
+      draftSettings().audioFolder !== settings.audioFolder ||
+      draftSettings().videoFolder !== settings.videoFolder ||
+      draftSettings().maxConcurrent !== settings.maxConcurrent,
+  );
+
+  const changeSummary = createMemo(() => {
+    const changes: string[] = [];
+
+    if (draftSettings().audioFolder !== settings.audioFolder) {
+      changes.push(
+        `Audio: ${settings.audioFolder || "Sin definir"} -> ${draftSettings().audioFolder || "Sin definir"}`,
+      );
+    }
+
+    if (draftSettings().videoFolder !== settings.videoFolder) {
+      changes.push(
+        `Video: ${settings.videoFolder || "Sin definir"} -> ${draftSettings().videoFolder || "Sin definir"}`,
+      );
+    }
+
+    if (draftSettings().maxConcurrent !== settings.maxConcurrent) {
+      changes.push(
+        `Descargas simultaneas: ${settings.maxConcurrent} -> ${draftSettings().maxConcurrent}`,
+      );
+    }
+
+    return changes;
+  });
 
   // Sync the global settings to local draft state EVERY TIME the modal opens
   createEffect(() => {
     if (props.isOpen) {
+      console.info("[settings] Opening modal with store values", {
+        audioFolder: settings.audioFolder,
+        videoFolder: settings.videoFolder,
+        maxConcurrent: settings.maxConcurrent,
+      });
       setAudioPath(settings.audioFolder);
       setVideoPath(settings.videoFolder);
       setMaxConcurrent(settings.maxConcurrent);
+      setIsDiscardConfirmOpen(false);
     }
   });
+
+  const closeModal = () => {
+    setIsDiscardConfirmOpen(false);
+    props.onOpenChange(false);
+  };
+
+  const requestClose = () => {
+    if (hasUnsavedChanges()) {
+      setIsDiscardConfirmOpen(true);
+      return;
+    }
+
+    closeModal();
+  };
 
   // Handlers for picking folders via Tauri OS Dialog
   const handlePickAudio = async () => {
@@ -42,13 +104,9 @@ export function SettingsModal(props: Props) {
   // Explicit Save
   const handleSave = async () => {
     // Write draft state to global store and persist to disk
-    await updateAllSettings({
-      audioFolder: audioPath(),
-      videoFolder: videoPath(),
-      maxConcurrent: maxConcurrent(),
-    });
+    await updateAllSettings(draftSettings());
 
-    props.onOpenChange(false);
+    closeModal();
     showAlert(
       "Ajustes Guardados",
       "Los cambios se aplicarán a las nuevas descargas.", // Clear UX feedback
@@ -57,12 +115,22 @@ export function SettingsModal(props: Props) {
   };
 
   return (
-    <Dialog open={props.isOpen} onOpenChange={props.onOpenChange}>
+    <Dialog
+      open={props.isOpen}
+      onOpenChange={(isOpen) => {
+        if (isOpen) {
+          props.onOpenChange(true);
+          return;
+        }
+
+        requestClose();
+      }}
+    >
       <Dialog.Portal>
         <Dialog.Overlay class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm data-expanded:animate-in data-closed:animate-out data-[expanded]:fade-in data-[closed]:fade-out" />
 
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <Dialog.Content class="bg-surface-low border border-surface-high rounded-3xl w-full max-w-lg shadow-[0_20px_60px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden data-expanded:animate-in data-closed:animate-out data-[expanded]:fade-in data-[closed]:fade-out data-[expanded]:zoom-in-95 data-[closed]:zoom-out-95">
+          <Dialog.Content class="relative bg-surface-low border border-surface-high rounded-3xl w-full max-w-lg shadow-[0_20px_60px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden data-expanded:animate-in data-closed:animate-out data-[expanded]:fade-in data-[closed]:fade-out data-[expanded]:zoom-in-95 data-[closed]:zoom-out-95">
             {/* Header */}
             <div class="flex items-center justify-between px-6 py-4 border-b border-surface-high bg-surface-highest/50">
               <Dialog.Title class="text-lg font-bold tracking-tight text-white">
@@ -138,18 +206,20 @@ export function SettingsModal(props: Props) {
                       Descargas Simultáneas
                     </label>
                     <div class="flex items-center bg-surface-lowest rounded-lg p-1 ghost-border">
-                      {[1, 2, 3, 4].map((num) => (
-                        <button
-                          class={`w-8 h-8 rounded-md flex items-center justify-center text-sm font-bold transition-all ${
-                            maxConcurrent() === num
-                              ? "bg-primary text-white shadow-md"
-                              : "text-on-surface-muted hover:text-white"
-                          }`}
-                          onClick={() => setMaxConcurrent(num)}
-                        >
-                          {num}
-                        </button>
-                      ))}
+                      <For each={DOWNLOAD_CONCURRENCY_OPTIONS}>
+                        {(num) => (
+                          <button
+                            class={`w-8 h-8 rounded-md flex items-center justify-center text-sm font-bold transition-all ${
+                              maxConcurrent() === num
+                                ? "bg-primary text-white shadow-md"
+                                : "text-on-surface-muted hover:text-white"
+                            }`}
+                            onClick={() => setMaxConcurrent(num)}
+                          >
+                            {num}
+                          </button>
+                        )}
+                      </For>
                     </div>
                   </div>
 
@@ -174,7 +244,7 @@ export function SettingsModal(props: Props) {
               <Button
                 variant="surface"
                 class="px-5 py-2.5 text-xs"
-                onClick={() => props.onOpenChange(false)} // Just closes, discards draft state
+                onClick={requestClose}
               >
                 CANCELAR
               </Button>
@@ -186,6 +256,59 @@ export function SettingsModal(props: Props) {
                 <Save size={14} /> GUARDAR CAMBIOS
               </Button>
             </div>
+
+            {isDiscardConfirmOpen() && (
+              <div class="absolute inset-0 z-10 flex items-center justify-center p-4">
+                <div class="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+                <div class="relative z-10 w-full max-w-md overflow-hidden rounded-3xl border border-amber-500/20 bg-surface-low shadow-[0_20px_60px_rgba(0,0,0,0.55)]">
+                  <div class="border-b border-surface-high bg-amber-500/10 px-6 py-4">
+                    <h3 class="text-lg font-bold tracking-tight text-white">
+                      Tienes cambios sin guardar
+                    </h3>
+                    <p class="mt-1 text-sm text-amber-100/80">
+                      Antes de cerrar, elige si quieres guardarlos o descartarlos.
+                    </p>
+                  </div>
+
+                  <div class="flex flex-col gap-4 px-6 py-5">
+                    <div class="rounded-2xl border border-amber-500/15 bg-surface-lowest/70 p-4">
+                      <p class="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300/80">
+                        Resumen de cambios
+                      </p>
+                      <div class="mt-3 flex flex-col gap-2 text-sm text-on-surface">
+                        <For each={changeSummary()}>
+                          {(change) => <p>{change}</p>}
+                        </For>
+                      </div>
+                    </div>
+
+                    <div class="flex items-center justify-end gap-3">
+                      <Button
+                        variant="surface"
+                        class="px-4 py-2.5 text-xs"
+                        onClick={() => setIsDiscardConfirmOpen(false)}
+                      >
+                        SEGUIR EDITANDO
+                      </Button>
+                      <Button
+                        variant="danger"
+                        class="px-4 py-2.5 text-xs"
+                        onClick={closeModal}
+                      >
+                        DESCARTAR CAMBIOS
+                      </Button>
+                      <Button
+                        variant="gradient"
+                        class="px-4 py-2.5 text-xs"
+                        onClick={handleSave}
+                      >
+                        <Save size={14} /> GUARDAR Y SALIR
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </Dialog.Content>
         </div>
       </Dialog.Portal>

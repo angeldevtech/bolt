@@ -12,7 +12,7 @@ export const [settings, setSettings] = createStore<IAppSettings>({
 
 export const initSettings = async () => {
   const result = await loadSettingsSafe();
-  console.log(result);
+  console.info("[settings] initSettings result", result);
   setSettings(result.data);
 
   if (result.wasCorrupted) {
@@ -25,12 +25,23 @@ export const initSettings = async () => {
 };
 
 export const updateAllSettings = async (newSettings: IAppSettings) => {
+  console.info("[settings] updateAllSettings", newSettings);
   setSettings(newSettings);
   const result = await saveSettings(newSettings);
 
   if (!result.success) {
     showAlert("Error al guardar", result.error, "error");
   }
+};
+
+export const updateSetting = async <K extends keyof IAppSettings>(
+  key: K,
+  value: IAppSettings[K],
+) => {
+  await updateAllSettings({
+    ...settings,
+    [key]: value,
+  });
 };
 
 // Expose a helper for the UI folder buttons

@@ -6,7 +6,6 @@ import { Footer } from "./components/layout/Footer";
 import { DownloadList } from "./components/downloads/DownloadList";
 import { SettingsModal } from "./components/settings/SettingsModal";
 import { GlobalToaster, showAlert } from "./components/ui/Toaster";
-import { type IDownloadItem } from "./types";
 import { pasteFromClipboard, checkYtDlpUpdate } from "./lib/api";
 import { UpdateModal } from "./components/update/UpdateModal";
 import { initSettings } from "./store/settings";
@@ -27,45 +26,6 @@ export default function App() {
 
   const hasActiveDownloads = () =>
     downloads.some((d) => d.status === "downloading" || d.status === "pending");
-
-  const mockDownloads: IDownloadItem[] = [
-    {
-      id: "1",
-      url: "https://youtu.be/...",
-      title: "Cyberpunk 2077 - Trailer",
-      format: "mp4-hd",
-      sizeMB: 142,
-      status: "downloading",
-      progress: 74,
-    },
-    {
-      id: "4",
-      url: "https://youtu.be/...",
-      title: "Interstellar Main Theme - Hans Zimmer",
-      format: "mp3",
-      status: "pending",
-      progress: 0,
-    },
-    {
-      id: "2",
-      url: "https://youtu.be/...",
-      title: "Lo-fi Hip Hop Radio - Beats to relax/study to",
-      format: "mp3",
-      sizeMB: 85,
-      status: "completed",
-      progress: 100,
-      filePath: "/Users/parents/Music/lofi.mp3",
-    },
-    {
-      id: "3",
-      url: "https://youtu.be/...",
-      title: "Nature Documentaries - Episode 04 (HD)",
-      format: "mp4",
-      status: "error",
-      progress: 0,
-      errorMsg: "Error de yt-dlp: Sign in to confirm you're not a bot",
-    },
-  ];
 
   const handlePaste = async () => {
     const result = await pasteFromClipboard();
