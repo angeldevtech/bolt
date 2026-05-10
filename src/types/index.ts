@@ -36,7 +36,8 @@ export interface IErrorPayload {
 }
 
 // A standard response wrapper for API calls
-export interface IActionResult {
+export interface IActionResult<T> {
   success: boolean;
   error?: string;
+  data?: T;
 }

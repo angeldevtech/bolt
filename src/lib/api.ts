@@ -23,11 +23,7 @@ const SETTINGS_FILE = "settings.json";
 const HISTORY_FILE = "history.json";
 
 // --- CLIPBOARD ---
-export async function pasteFromClipboard(): Promise<{
-  success: boolean;
-  text?: string;
-  error?: string;
-}> {
+export async function pasteFromClipboard(): Promise<IActionResult<String>> {
   try {
     const text = await readText();
 
@@ -38,7 +34,7 @@ export async function pasteFromClipboard(): Promise<{
       };
     }
 
-    return { success: true, text: text.trim() };
+    return { success: true, data: text.trim() };
   } catch (error) {
     console.error("Clipboard error:", error);
     return {
@@ -50,20 +46,27 @@ export async function pasteFromClipboard(): Promise<{
 }
 
 // --- UPDATES (yt-dlp) ---
-export async function checkYtDlpUpdate(): Promise<boolean> {
+export async function checkYtDlpUpdate(): Promise<IActionResult<boolean>> {
   try {
-    return await invoke<boolean>("check_yt_dlp_update");
+    const hasUpdate = await invoke<boolean>("check_yt_dlp_update");
+    return { success: true, data: hasUpdate };
   } catch (error) {
-    return true;
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
-export async function performYtDlpUpdate(): Promise<IActionResult> {
+export async function performYtDlpUpdate(): Promise<IActionResult<boolean>> {
   try {
-    await invoke("perform_yt_dlp_update");
-    return { success: true };
+    const updated = await invoke<boolean>("perform_yt_dlp_update");
+    return { success: true, data: updated };
   } catch (error) {
-    return { success: false, error: String(error) };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -103,7 +106,9 @@ export async function startDownload(
   }
 }
 
-export async function cancelDownload(id: string): Promise<IActionResult> {
+export async function cancelDownload(
+  id: string,
+): Promise<IActionResult<boolean>> {
   try {
     await invoke("cancel_download", { id });
     return { success: true };
@@ -112,7 +117,9 @@ export async function cancelDownload(id: string): Promise<IActionResult> {
   }
 }
 
-export async function openInFolder(filePath: string): Promise<IActionResult> {
+export async function openInFolder(
+  filePath: string,
+): Promise<IActionResult<boolean>> {
   try {
     await invoke("open_in_folder", { filePath });
     return { success: true };
@@ -121,7 +128,9 @@ export async function openInFolder(filePath: string): Promise<IActionResult> {
   }
 }
 
-export async function deleteFile(filePath: string): Promise<IActionResult> {
+export async function deleteFile(
+  filePath: string,
+): Promise<IActionResult<boolean>> {
   try {
     await invoke("delete_file", { filePath });
     return { success: true };
@@ -250,7 +259,7 @@ export async function loadSettingsSafe(): Promise<{
 
 export async function saveSettings(
   settings: IAppSettings,
-): Promise<IActionResult> {
+): Promise<IActionResult<boolean>> {
   try {
     const store = await getSettingsStore();
     await store.set("audioFolder", settings.audioFolder);
