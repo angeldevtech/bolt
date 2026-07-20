@@ -12,6 +12,7 @@
     "dialog:default",
     "clipboard-manager:default",
     "clipboard-manager:allow-read-text",
+    "shell:allow-open",
     "fs:allow-applocaldata-read-recursive",
     "fs:allow-applocaldata-write-recursive",
     {

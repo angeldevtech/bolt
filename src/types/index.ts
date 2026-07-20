@@ -1,4 +1,4 @@
-export type TDownloadStatus = "pending" | "downloading" | "completed" | "error";
+export type TDownloadStatus = "pending" | "downloading" | "completed" | "error" | "cancelled";
 export type TFormat = "mp3" | "mp4" | "mp4-hd";
 
 export interface IDownloadItem {

@@ -8,8 +8,25 @@ import {
   AlertCircle,
   Clock,
 } from "lucide-solid";
+import { confirm } from "@tauri-apps/plugin-dialog";
+import { createMemo } from "solid-js";
 import { type IDownloadItem } from "../../types";
 import { Button } from "../ui/Button";
+import { openFile, openInFolder, deleteToTrash, cancelDownload } from "../../lib/api";
+import { retryDownload, removeDownload, updateDownloadStatus } from "../../store/downloads";
+import { showAlert } from "../ui/Toaster";
+
+function getYouTubeThumbnail(url: string): string | null {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+    /^([a-zA-Z0-9_-]{11})$/
+  ];
+  for (const p of patterns) {
+    const m = url.match(p);
+    if (m) return `https://img.youtube.com/vi/${m[1]}/mqdefault.jpg`;
+  }
+  return null;
+}
 
 interface IDownloadItemProps {
   item: IDownloadItem;
@@ -20,6 +37,7 @@ export function DownloadItem(props: IDownloadItemProps) {
   const isDownloading = () => props.item.status === "downloading";
   const isCompleted = () => props.item.status === "completed";
   const isError = () => props.item.status === "error";
+  const isCancelled = () => props.item.status === "cancelled";
 
   const formatDisplay = {
     mp3: "MP3",
@@ -27,12 +45,46 @@ export function DownloadItem(props: IDownloadItemProps) {
     "mp4-hd": "MP4 HD",
   };
 
+  const handleDeleteCompleted = async () => {
+    const confirmed = await confirm(
+      "¿Eliminar archivo? Se moverá a la papelera.",
+      { title: "Eliminar archivo", kind: "warning" },
+    );
+    if (!confirmed) return;
+    const result = await deleteToTrash(props.item.filePath!);
+    if (result.success) {
+      await removeDownload(props.item.id);
+      showAlert("Archivo eliminado", "El archivo se ha movido a la papelera.", "success");
+    } else {
+      showAlert("Error", result.error, "error");
+    }
+  };
+
+  const handleOpen = async () => {
+    await openInFolder(props.item.filePath!);
+  };
+
+  const handleCancel = async () => {
+    await cancelDownload(props.item.id);
+    await updateDownloadStatus(props.item.id, { status: "cancelled" });
+  };
+
+  const thumbnailUrl = createMemo(() => getYouTubeThumbnail(props.item.url));
+
   return (
     <div
-      class={`flex items-center gap-4 bg-surface-low rounded-2xl p-2 pr-4 ${isError() ? "opacity-90 grayscale-20" : ""}`}
+      class={`flex items-center gap-4 bg-surface-low rounded-2xl p-2 pr-4 ${isError() || isCancelled() ? "opacity-90 grayscale-20" : ""}`}
     >
       {/* Thumbnail Left Side */}
       <div class="relative w-40 h-24 rounded-xl overflow-hidden shrink-0 bg-surface-lowest">
+        {thumbnailUrl() && (
+          <img
+            src={thumbnailUrl()!}
+            alt=""
+            class="absolute inset-0 w-full h-full object-cover"
+            loading="lazy"
+          />
+        )}
         {(isDownloading() || isPending()) && (
           <>
             <div class="absolute inset-0 bg-linear-to-br from-purple-900/40 to-blue-900/40" />
@@ -55,7 +107,7 @@ export function DownloadItem(props: IDownloadItemProps) {
             </div>
           </>
         )}
-        {isError() && (
+        {(isError() || isCancelled()) && (
           <>
             <div class="absolute inset-0 bg-linear-to-b from-zinc-800 to-zinc-950" />
             <div class="absolute inset-0 flex items-center justify-center">
@@ -94,6 +146,9 @@ export function DownloadItem(props: IDownloadItemProps) {
             <span class="text-primary opacity-80">DESCARGANDO...</span>
           )}
           {isCompleted() && <span class="text-primary">COMPLETADO</span>}
+          {isCancelled() && (
+            <span class="text-on-surface-muted">CANCELADA</span>
+          )}
           {isError() && (
             <span
               class="text-red-400 truncate max-w-full"
@@ -122,33 +177,47 @@ export function DownloadItem(props: IDownloadItemProps) {
               <>
                 <Button
                   variant="surface"
-                  onClick={() => console.log("Play", props.item.filePath)}
+                  onClick={() => openFile(props.item.filePath!)}
                 >
                   <Play size={12} fill="currentColor" /> REPRODUCIR
                 </Button>
                 <Button
                   variant="surface"
-                  onClick={() => console.log("Open", props.item.filePath)}
+                  onClick={handleOpen}
                 >
                   <FolderOpen size={12} /> ABRIR
                 </Button>
+                <Button
+                  variant="danger"
+                  onClick={handleDeleteCompleted}
+                >
+                  <Trash2 size={12} /> ELIMINAR
+                </Button>
               </>
             )}
-            {isError() && (
-              <Button variant="surface">
-                <RotateCw size={12} /> REINTENTAR
-              </Button>
+            {(isError() || isCancelled()) && (
+              <>
+                <Button
+                  variant="surface"
+                  onClick={() => retryDownload(props.item.id)}
+                >
+                  <RotateCw size={12} /> REINTENTAR
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={() => removeDownload(props.item.id)}
+                >
+                  <Trash2 size={12} /> ELIMINAR
+                </Button>
+              </>
             )}
-            <Button variant="danger">
-              <Trash2 size={12} /> ELIMINAR
-            </Button>
           </div>
         )}
       </div>
 
       {/* Right Cancel Button (For Pending AND Downloading) */}
       {(isDownloading() || isPending()) && (
-        <Button variant="icon" class="ml-2">
+        <Button variant="icon" class="ml-2" onClick={handleCancel}>
           <X size={18} />
         </Button>
       )}

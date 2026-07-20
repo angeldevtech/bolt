@@ -6,9 +6,16 @@ import { Footer } from "./components/layout/Footer";
 import { DownloadList } from "./components/downloads/DownloadList";
 import { SettingsModal } from "./components/settings/SettingsModal";
 import { GlobalToaster, showAlert } from "./components/ui/Toaster";
-import { pasteFromClipboard, checkYtDlpUpdate } from "./lib/api";
-import { initSettings } from "./store/settings";
-import { initDownloads, downloads } from "./store/downloads";
+import type { TFormat } from "./types";
+import { pasteFromClipboard, checkYtDlpUpdate, startDownload } from "./lib/api";
+import { setupDownloadListeners } from "./lib/events";
+import { initSettings, settings } from "./store/settings";
+import {
+  initDownloads,
+  addDownload,
+  downloads,
+  updateDownloadStatus,
+} from "./store/downloads";
 const UpdateModal = lazy(() => import("./components/update/UpdateModal"));
 
 export default function App() {
@@ -21,7 +28,28 @@ export default function App() {
     await initSettings();
     await initDownloads();
     const available = await checkYtDlpUpdate();
-    setIsUpdateAvailable(available);
+    setIsUpdateAvailable(available.success && !!available.data);
+
+    setupDownloadListeners({
+      onProgress: (payload) =>
+        updateDownloadStatus(payload.id, {
+          progress: payload.progress,
+          ...(downloads.find(d => d.id === payload.id)?.status === "pending"
+            ? { status: "downloading" }
+            : {}),
+        }),
+      onComplete: (payload) =>
+        updateDownloadStatus(payload.id, {
+          status: "completed",
+          filePath: payload.filePath,
+          sizeMB: payload.sizeMB,
+        }),
+      onError: (payload) =>
+        updateDownloadStatus(payload.id, {
+          status: "error",
+          errorMsg: payload.errorMsg,
+        }),
+    });
   });
 
   const hasActiveDownloads = () =>
@@ -30,15 +58,18 @@ export default function App() {
   const handlePaste = async () => {
     const result = await pasteFromClipboard();
 
-    if (result.success && result.text) {
-      setUrl(result.text);
+    console.log(result)
+
+    if (result.success && result.data) {
+      setUrl(result.data);
     } else {
       showAlert("Error al pegar", result.error, "error");
     }
   };
 
-  const handleDownload = (format: string) => {
-    if (!url()) {
+  const handleDownload = async (format: string) => {
+    const currentUrl = url();
+    if (!currentUrl) {
       showAlert(
         "Enlace requerido",
         "Por favor ingresa un enlace de YouTube válido.",
@@ -46,13 +77,28 @@ export default function App() {
       );
       return;
     }
-    // TODO replace with the actual code
-    showAlert(
-      "Descarga Iniciada",
-      `Añadido a la cola en formato ${format.toUpperCase()}`,
-      "success",
-    );
+    const tempId = crypto.randomUUID();
+    const outputDir = format === "mp3" ? settings.audioFolder : settings.videoFolder;
+    if (!outputDir) {
+      showAlert("Carpeta no configurada", "Configura la carpeta de descarga en Ajustes.", "error");
+      return;
+    }
+    addDownload({
+      id: tempId,
+      url: currentUrl,
+      title: "Cargando...",
+      format: format as TFormat,
+      status: "pending",
+      progress: 0,
+    });
     setUrl("");
+
+    const result = await startDownload(currentUrl, format as TFormat, outputDir);
+    if (result.id && result.title) {
+      updateDownloadStatus(tempId, { id: result.id, title: result.title, status: "downloading" });
+    } else {
+      updateDownloadStatus(tempId, { status: "error", errorMsg: result.error || "Error desconocido" });
+    }
   };
 
   return (

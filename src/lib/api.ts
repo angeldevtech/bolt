@@ -23,7 +23,7 @@ const SETTINGS_FILE = "settings.json";
 const HISTORY_FILE = "history.json";
 
 // --- CLIPBOARD ---
-export async function pasteFromClipboard(): Promise<IActionResult<String>> {
+export async function pasteFromClipboard(): Promise<IActionResult<string>> {
   try {
     const text = await readText();
 
@@ -93,14 +93,14 @@ export async function startDownload(
   url: string,
   format: TFormat,
   outputDir: string,
-): Promise<{ id?: string; error?: string }> {
+): Promise<{ id?: string; title?: string; error?: string }> {
   try {
-    const id = await invoke<string>("start_download", {
+    const result = await invoke<{ id: string; title: string }>("start_download", {
       url,
       format,
       outputDir,
     });
-    return { id };
+    return { id: result.id, title: result.title };
   } catch (error) {
     return { error: String(error) };
   }
@@ -117,22 +117,33 @@ export async function cancelDownload(
   }
 }
 
-export async function openInFolder(
+export async function openFile(
   filePath: string,
 ): Promise<IActionResult<boolean>> {
   try {
-    await invoke("open_in_folder", { filePath });
+    await invoke("open_file", { filePath });
     return { success: true };
   } catch (error) {
     return { success: false, error: String(error) };
   }
 }
 
-export async function deleteFile(
+export async function deleteToTrash(
   filePath: string,
 ): Promise<IActionResult<boolean>> {
   try {
-    await invoke("delete_file", { filePath });
+    await invoke("delete_to_trash", { filePath });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: String(error) };
+  }
+}
+
+export async function openInFolder(
+  filePath: string,
+): Promise<IActionResult<boolean>> {
+  try {
+    await invoke("open_in_folder", { filePath });
     return { success: true };
   } catch (error) {
     return { success: false, error: String(error) };

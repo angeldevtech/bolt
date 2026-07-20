@@ -1,5 +1,6 @@
 import { createStore } from "solid-js/store";
-import { loadHistorySafe, saveHistory } from "../lib/api";
+import { loadHistorySafe, saveHistory, startDownload } from "../lib/api";
+import { settings } from "./settings";
 import { showAlert } from "../components/ui/Toaster";
 import type { IDownloadItem } from "../types";
 
@@ -44,4 +45,29 @@ export const updateDownloadStatus = async (
 export const removeDownload = async (id: string) => {
   setDownloads((prev) => prev.filter((d) => d.id !== id));
   await saveHistory(downloads);
+};
+
+export const retryDownload = async (id: string) => {
+  const item = downloads.find((d) => d.id === id);
+  if (!item) return;
+  const tempId = crypto.randomUUID();
+  const outputDir = item.format === "mp3" ? settings.audioFolder : settings.videoFolder;
+  if (!outputDir) {
+    showAlert("Carpeta no configurada", "Configura la carpeta de descarga en Ajustes.", "error");
+    return;
+  }
+  const newItem: IDownloadItem = {
+    id: tempId,
+    url: item.url, title: item.title,
+    format: item.format, status: "pending", progress: 0,
+  };
+  await addDownload(newItem);
+  await removeDownload(id);
+
+  const result = await startDownload(item.url, item.format, outputDir);
+  if (result.id && result.title) {
+    updateDownloadStatus(tempId, { id: result.id, title: result.title, status: "downloading" });
+  } else {
+    updateDownloadStatus(tempId, { status: "error", errorMsg: result.error || "Error desconocido" });
+  }
 };
