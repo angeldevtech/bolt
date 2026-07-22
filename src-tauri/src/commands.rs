@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use log::info;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
@@ -46,6 +46,35 @@ pub struct DownloadManager {
 
 pub type AppState = Arc<Mutex<DownloadManager>>;
 
+const YT_DLP_RESOURCE: &str = "tools/yt-dlp.exe";
+const FFMPEG_RESOURCE: &str = "tools/ffmpeg.exe";
+
+fn resolve_tools(app: &AppHandle) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
+    let resource_yt_dlp = app
+        .path()
+        .resolve(YT_DLP_RESOURCE, BaseDirectory::Resource)
+        .map_err(|e| format!("No se pudo localizar yt-dlp incluido: {}", e))?;
+    let ffmpeg = app
+        .path()
+        .resolve(FFMPEG_RESOURCE, BaseDirectory::Resource)
+        .map_err(|e| format!("No se pudo localizar ffmpeg incluido: {}", e))?;
+    let app_tools = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| format!("No se pudo localizar AppLocalData: {}", e))?
+        .join("tools");
+    let writable_yt_dlp = app_tools.join("yt-dlp.exe");
+
+    std::fs::create_dir_all(&app_tools)
+        .map_err(|e| format!("No se pudo preparar AppLocalData: {}", e))?;
+    if !writable_yt_dlp.is_file() {
+        std::fs::copy(&resource_yt_dlp, &writable_yt_dlp)
+            .map_err(|e| format!("No se pudo restaurar yt-dlp incluido: {}", e))?;
+    }
+
+    Ok((writable_yt_dlp, ffmpeg))
+}
+
 #[tauri::command]
 pub async fn start_download(
     app: AppHandle,
@@ -54,20 +83,27 @@ pub async fn start_download(
     output_dir: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<StartDownloadResult, String> {
-    info!("start_download called: url={}, format={}, output_dir={}", url, format, output_dir);
+    info!(
+        "start_download called: url={}, format={}, output_dir={}",
+        url, format, output_dir
+    );
 
     if !url.starts_with("http://") && !url.starts_with("https://") {
         info!("start_download: invalid URL, returning error");
         return Err("URL inválida. Debe comenzar con http:// o https://".into());
     }
 
-    info!("start_download: checking yt-dlp...");
-    let yt_dlp_check = Command::new("yt-dlp")
+    let (yt_dlp_path, ffmpeg_path) = resolve_tools(&app)?;
+    info!(
+        "start_download: checking bundled yt-dlp at {:?}",
+        yt_dlp_path
+    );
+    let yt_dlp_check = Command::new(&yt_dlp_path)
         .arg("--version")
         .output()
         .await
         .map_err(|_| {
-            "yt-dlp no encontrado. Asegúrate de que esté instalado y accesible en PATH.".to_string()
+            "yt-dlp incluido no pudo ejecutarse. Revisa el archivo de la aplicación.".to_string()
         })?;
 
     if !yt_dlp_check.status.success() {
@@ -76,12 +112,12 @@ pub async fn start_download(
     }
 
     info!("start_download: checking ffmpeg...");
-    let ffmpeg_check = Command::new("ffmpeg")
+    let ffmpeg_check = Command::new(&ffmpeg_path)
         .arg("-version")
         .output()
         .await
         .map_err(|_| {
-            "ffmpeg no encontrado. Necesario para la conversión de audio/video.".to_string()
+            "ffmpeg incluido no pudo ejecutarse. Revisa el archivo de la aplicación.".to_string()
         })?;
 
     if !ffmpeg_check.status.success() {
@@ -92,7 +128,12 @@ pub async fn start_download(
     info!("start_download: fetching title...");
     let title = match tokio::time::timeout(
         Duration::from_secs(10),
-        Command::new("yt-dlp").arg("--get-title").arg(&url).output(),
+        Command::new(&yt_dlp_path)
+            .arg("--encoding")
+            .arg("utf-8")
+            .arg("--get-title")
+            .arg(&url)
+            .output(),
     )
     .await
     {
@@ -122,7 +163,17 @@ pub async fn start_download(
     };
 
     info!("start_download: spawning download task...");
-    spawn_download_task(app, state.inner().clone(), id, url, format, output_dir, cancel_flag);
+    spawn_download_task(
+        app,
+        state.inner().clone(),
+        id,
+        url,
+        format,
+        output_dir,
+        cancel_flag,
+        yt_dlp_path,
+        ffmpeg_path,
+    );
 
     Ok(result)
 }
@@ -135,8 +186,13 @@ fn spawn_download_task(
     format: String,
     output_dir: String,
     cancel_flag: Arc<AtomicBool>,
+    yt_dlp_path: std::path::PathBuf,
+    ffmpeg_path: std::path::PathBuf,
 ) {
-    info!("spawn_download_task: starting for id={}, format={}", id, format);
+    info!(
+        "spawn_download_task: starting for id={}, format={}",
+        id, format
+    );
     tokio::spawn(async move {
         let (format_selector, extra_args, output_template) = match format.as_str() {
             "mp3" => (
@@ -145,13 +201,13 @@ fn spawn_download_task(
                 "%(title)s.%(ext)s",
             ),
             "mp4-hd" => (
-                "bestvideo[height>=1080]+bestaudio/best",
-                vec!["--merge-output-format", "mp4"],
+                "(bv*[height>=1080][vcodec~='^((he|a)vc|h26[45])']+ba)/(bv*[height>=1080]+ba)/(bv*+ba/b)",
+                vec!["--merge-output-format", "mp4", "--remux-video", "mp4"],
                 "%(title)s [HD].%(ext)s",
             ),
             _ => (
-                "bestvideo[height<=1080][height>=720]+bestaudio/best[height<=1080]+bestaudio/best[height<=1080]/best",
-                vec!["--merge-output-format", "mp4"],
+                "(bv*[height<=1080][height>=720][vcodec~='^((he|a)vc|h26[45])']+ba)/(bv*[height<=1080][height>=720]+ba)/(bv*+ba/b)",
+                vec!["--merge-output-format", "mp4", "--remux-video", "mp4"],
                 "%(title)s.%(ext)s",
             ),
         };
@@ -160,16 +216,23 @@ fn spawn_download_task(
         let output_path_str = output_path.to_string_lossy().to_string();
         info!("spawn_download_task: output template: {}", output_path_str);
 
-let mut cmd = Command::new("yt-dlp");
+        let mut cmd = Command::new(&yt_dlp_path);
         cmd.arg("-f")
             .arg(format_selector)
             .arg("--newline")
+            .arg("--encoding")
+            .arg("utf-8")
+            // Keep Unicode title characters and let yt-dlp report final path directly.
+            .arg("--no-restrict-filenames")
+            .arg("--no-windows-filenames")
+            .arg("--ffmpeg-location")
+            .arg(ffmpeg_path.parent().unwrap_or(&ffmpeg_path))
             .arg("--embed-thumbnail")
             .arg("--add-metadata")
             .arg("-o")
             .arg(&output_path_str)
-            .arg("--exec")
-            .arg("echo __BOLT_FILE__{}")
+            .arg("--print")
+            .arg("after_move:__BOLT_FILE__%(filepath)s")
             .arg(&url);
 
         for arg in &extra_args {
@@ -224,7 +287,9 @@ let mut cmd = Command::new("yt-dlp");
                                     },
                                 );
                             } else if trimmed.starts_with("__BOLT_FILE__") {
-                                let path = trimmed.trim_start_matches("__BOLT_FILE__").to_string();
+                                let path = normalize_reported_path(
+                                    trimmed.trim_start_matches("__BOLT_FILE__"),
+                                );
                                 info!("spawn_download_task: captured output filename: {}", path);
                                 output_filename = Some(path);
                             }
@@ -272,7 +337,10 @@ let mut cmd = Command::new("yt-dlp");
                     .map(|m| m.len() as f64 / 1_048_576.0)
                     .unwrap_or(0.0);
 
-                info!("spawn_download_task: download complete, file={:?}, size={:.2}MB", output_filename, size_mb);
+                info!(
+                    "spawn_download_task: download complete, file={:?}, size={:.2}MB",
+                    output_filename, size_mb
+                );
                 let _ = app.emit(
                     "download_complete",
                     CompletePayload {
@@ -317,11 +385,20 @@ fn parse_progress(line: &str) -> Option<f64> {
     num_str.parse::<f64>().ok()
 }
 
+fn normalize_reported_path(path: &str) -> String {
+    let path = path.trim();
+
+    // Older yt-dlp/shell based reporting could wrap Windows paths in quotes.
+    // Quotes cannot be part of a Windows filename, so remove only matching edges.
+    if path.len() >= 2 && path.starts_with('"') && path.ends_with('"') {
+        return path[1..path.len() - 1].to_string();
+    }
+
+    path.to_string()
+}
+
 #[tauri::command]
-pub async fn cancel_download(
-    id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn cancel_download(id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     info!("cancel_download called: id={}", id);
     let mut manager = state.lock().await;
     if let Some(flag) = manager.cancel_flags.remove(&id) {
@@ -392,9 +469,7 @@ pub async fn open_in_folder(file_path: String) -> Result<(), String> {
     }
     #[cfg(target_os = "linux")]
     {
-        let parent = Path::new(path)
-            .parent()
-            .unwrap_or(Path::new("/"));
+        let parent = Path::new(path).parent().unwrap_or(Path::new("/"));
         std::process::Command::new("xdg-open")
             .arg(parent)
             .spawn()
@@ -410,36 +485,59 @@ pub async fn delete_to_trash(file_path: String) -> Result<(), String> {
     if path.is_empty() {
         return Err("Ruta de archivo vacía".into());
     }
-    trash::delete_all(&[path.as_ref() as &Path]).map_err(|e| format!("Error al mover a la papelera: {}", e))
+    trash::delete_all(&[path.as_ref() as &Path])
+        .map_err(|e| format!("Error al mover a la papelera: {}", e))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct YtDlpUpdateResult {
+    pub updated: bool,
+    pub output: String,
 }
 
 #[tauri::command]
-pub async fn check_yt_dlp_update() -> Result<bool, String> {
-    info!("check_yt_dlp_update: returning false (stub)");
-    Ok(false)
-}
+pub async fn perform_yt_dlp_update(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<YtDlpUpdateResult, String> {
+    if !state.lock().await.cancel_flags.is_empty() {
+        return Err("No se puede actualizar mientras haya descargas activas.".into());
+    }
 
-#[tauri::command]
-pub async fn perform_yt_dlp_update() -> Result<bool, String> {
-    info!("perform_yt_dlp_update: running yt-dlp -U");
-    let output = tokio::process::Command::new("yt-dlp")
+    let (yt_dlp_path, _) = resolve_tools(&app)?;
+    let backup_path = yt_dlp_path.with_extension("exe.bak");
+    std::fs::copy(&yt_dlp_path, &backup_path)
+        .map_err(|e| format!("No se pudo preparar copia de seguridad de yt-dlp: {}", e))?;
+
+    info!("perform_yt_dlp_update: running bundled writable yt-dlp -U");
+    let output = tokio::process::Command::new(&yt_dlp_path)
         .arg("-U")
         .arg("--no-color")
         .output()
         .await
         .map_err(|e| format!("Error al ejecutar yt-dlp -U: {}", e))?;
 
-    if output.status.success() {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = [stdout.as_ref(), stderr.as_ref()]
+        .iter()
+        .filter(|part| !part.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if output.status.success() || combined.to_lowercase().contains("up to date") {
+        let _ = std::fs::remove_file(&backup_path);
         info!("perform_yt_dlp_update: success");
-        Ok(true)
+        Ok(YtDlpUpdateResult {
+            updated: true,
+            output: combined.trim().to_string(),
+        })
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.to_lowercase().contains("up to date") {
-            info!("perform_yt_dlp_update: already up to date");
-            Ok(true)
-        } else {
-            info!("perform_yt_dlp_update: failed: {}", stderr.trim());
-            Err(format!("Error al actualizar: {}", stderr.trim()))
-        }
+        let _ = std::fs::copy(&backup_path, &yt_dlp_path);
+        let _ = std::fs::remove_file(&backup_path);
+        info!("perform_yt_dlp_update: failed: {}", combined.trim());
+        Err(format!("Error al actualizar: {}", combined.trim()))
     }
 }

@@ -52,10 +52,21 @@ bun run tauri dev
 bun run tauri build
 ```
 
+Windows x64 release builds produce an unsigned NSIS installer at
+`src-tauri/target/release/bundle/nsis/*-setup.exe`. Installer includes yt-dlp
+and ffmpeg, so users do not need Python, PATH configuration, or a package
+manager. Bolt stores download history and replaceable yt-dlp copy under
+`%LOCALAPPDATA%\Bolt`.
+
 ## Notes
 
-* Requires `yt-dlp` available on the system
-* Platform-specific builds (macOS / Windows)
+* Windows x64 is supported for MVP release builds.
+* yt-dlp and ffmpeg are bundled from `binaries/`.
+* Update action requires internet access and can be affected by antivirus or
+  locked files.
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for bundled binary
+sources and licensing obligations.
 
 ## License
 

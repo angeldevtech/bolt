@@ -4,6 +4,7 @@ import {
   audioDir,
   BaseDirectory,
   downloadDir,
+  join,
   videoDir,
 } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -15,6 +16,7 @@ import {
   type IAppSettings,
   type IActionResult,
   type IDownloadItem,
+  type IYtDlpUpdateResult,
   type TDownloadStatus,
 } from "../types";
 import { DEFAULT_MAX_CONCURRENT } from "../constants";
@@ -46,22 +48,10 @@ export async function pasteFromClipboard(): Promise<IActionResult<string>> {
 }
 
 // --- UPDATES (yt-dlp) ---
-export async function checkYtDlpUpdate(): Promise<IActionResult<boolean>> {
+export async function performYtDlpUpdate(): Promise<IActionResult<IYtDlpUpdateResult>> {
   try {
-    const hasUpdate = await invoke<boolean>("check_yt_dlp_update");
-    return { success: true, data: hasUpdate };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-export async function performYtDlpUpdate(): Promise<IActionResult<boolean>> {
-  try {
-    const updated = await invoke<boolean>("perform_yt_dlp_update");
-    return { success: true, data: updated };
+    const result = await invoke<IYtDlpUpdateResult>("perform_yt_dlp_update");
+    return { success: true, data: result };
   } catch (error) {
     return {
       success: false,
@@ -302,7 +292,7 @@ function recoverInterruptedDownloads(
 
 export async function getHistoryPath(): Promise<string> {
   const base = await appLocalDataDir();
-  return `${base}${base.endsWith("\\") || base.endsWith("/") ? "" : "\\"}${HISTORY_FILE}`;
+  return await join(base, HISTORY_FILE);
 }
 
 export async function loadHistorySafe(): Promise<{

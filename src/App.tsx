@@ -7,7 +7,7 @@ import { DownloadList } from "./components/downloads/DownloadList";
 import { SettingsModal } from "./components/settings/SettingsModal";
 import { GlobalToaster, showAlert } from "./components/ui/Toaster";
 import type { TFormat } from "./types";
-import { pasteFromClipboard, checkYtDlpUpdate, startDownload } from "./lib/api";
+import { pasteFromClipboard, startDownload } from "./lib/api";
 import { setupDownloadListeners } from "./lib/events";
 import { initSettings, settings } from "./store/settings";
 import {
@@ -27,8 +27,8 @@ export default function App() {
   onMount(async () => {
     await initSettings();
     await initDownloads();
-    const available = await checkYtDlpUpdate();
-    setIsUpdateAvailable(available.success && !!available.data);
+    // Update action performs its own read-only check before changing yt-dlp.
+    setIsUpdateAvailable(true);
 
     setupDownloadListeners({
       onProgress: (payload) =>

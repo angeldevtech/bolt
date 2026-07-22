@@ -23,15 +23,19 @@ export default function UpdateModal(props: IUpdateModalProps) {
     "idle" | "updating" | "success" | "error"
   >("idle");
   const [errorMessage, setErrorMessage] = createSignal("");
+  const [updateOutput, setUpdateOutput] = createSignal("");
 
   const handleUpdate = async () => {
     if (props.hasActiveDownloads) return;
 
     setUpdateStatus("updating");
+    setErrorMessage("");
+    setUpdateOutput("");
 
     const result = await performYtDlpUpdate();
 
     if (result.success) {
+      setUpdateOutput(result.data?.output || "Actualización comprobada.");
       setUpdateStatus("success");
     } else {
       setUpdateStatus("error");
@@ -91,9 +95,8 @@ export default function UpdateModal(props: IUpdateModalProps) {
                 {/* ESTADO: INICIO */}
                 <Match when={updateStatus() === "idle"}>
                   <p class="text-sm text-on-surface-muted leading-relaxed">
-                    Hay una nueva versión disponible para el motor de descargas.
-                    Es recomendable actualizar para asegurar que las descargas
-                    sigan funcionando correctamente.
+                    Comprueba e instala la versión más reciente del motor de
+                    descargas. La acción necesita conexión a internet.
                   </p>
 
                   {/* Warning si hay descargas activas */}
@@ -148,6 +151,11 @@ export default function UpdateModal(props: IUpdateModalProps) {
                         listo para continuar.
                       </p>
                     </div>
+                    <Show when={updateOutput()}>
+                      <pre class="max-h-32 w-full overflow-auto rounded-lg bg-surface-lowest p-3 text-left text-[0.65rem] text-on-surface-muted whitespace-pre-wrap">
+                        {updateOutput()}
+                      </pre>
+                    </Show>
                   </div>
                 </Match>
 

@@ -30,6 +30,7 @@ Thumbs.db
 
 # Misc
 *.tsbuildinfo
+*.exe
 
 # Agent stuff
 .ai

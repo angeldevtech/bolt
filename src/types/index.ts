@@ -41,3 +41,8 @@ export interface IActionResult<T> {
   error?: string;
   data?: T;
 }
+
+export interface IYtDlpUpdateResult {
+  updated: boolean;
+  output: string;
+}

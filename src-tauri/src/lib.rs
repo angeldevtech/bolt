@@ -21,7 +21,6 @@ pub fn run() {
             commands::open_file,
             commands::open_in_folder,
             commands::delete_to_trash,
-            commands::check_yt_dlp_update,
             commands::perform_yt_dlp_update,
         ])
         .setup(|app| {
