@@ -48,15 +48,64 @@ bun run tauri dev
 
 ## Build
 
-```bash
-bun run tauri build
+Run commands from Bolt repository root, same folder as `package.json`.
+
+Install dependencies first:
+
+```powershell
+bun install --frozen-lockfile --ignore-scripts
 ```
 
-Windows x64 release builds produce an unsigned NSIS installer at
-`src-tauri/target/release/bundle/nsis/*-setup.exe`. Installer includes yt-dlp
-and ffmpeg, so users do not need Python, PATH configuration, or a package
-manager. Bolt stores download history and replaceable yt-dlp copy under
-`%LOCALAPPDATA%\Bolt`.
+### Production build
+
+Production build hides application and child-process console windows. Generate it with:
+
+```bash
+bun run build:tauri
+```
+
+Generated files:
+
+```text
+src-tauri/target/release/app.exe
+src-tauri/target/release/bundle/nsis/Bolt_0.1.0_x64-setup.exe
+```
+
+The NSIS installer is unsigned. It includes yt-dlp and ffmpeg, so users do not
+need Python, PATH configuration, or a package manager.
+
+### Diagnostic build
+
+Diagnostic build shows one application console and writes logs under:
+`%LOCALAPPDATA%\Bolt\logs\`.
+
+```powershell
+bun run build:tauri:diagnostic
+```
+
+This command uses Cargo feature `diagnostic` explicitly. It produces the same
+output paths as production, so run it after production build when investigating
+an issue. Copy or rename artifacts before generating another build if both are
+needed.
+
+Diagnostic output:
+
+```text
+src-tauri/target/release/app.exe
+src-tauri/target/release/bundle/nsis/Bolt_0.1.0_x64-setup.exe
+%LOCALAPPDATA%\Bolt\logs\
+```
+
+For quick frontend-only checks:
+
+```powershell
+bun run build:check
+bun run build:vite
+```
+
+Build artifacts under `src-tauri/target/` are generated files and should not be
+included in source review or release provenance. Publish only after verifying
+the bundled binaries, installer hashes, signatures, and Defender/EDR results.
 
 ## Notes
 

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use tauri_plugin_log::{Target, TargetKind};
 use tokio::sync::Mutex;
 
 mod commands;
@@ -24,13 +25,18 @@ pub fn run() {
             commands::perform_yt_dlp_update,
         ])
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
+            let level = if cfg!(feature = "diagnostic") || cfg!(debug_assertions) {
+                log::LevelFilter::Info
+            } else {
+                log::LevelFilter::Error
+            };
+            let mut log_builder = tauri_plugin_log::Builder::default()
+                .level(level)
+                .target(Target::new(TargetKind::LogDir { file_name: None }));
+            if cfg!(feature = "diagnostic") || cfg!(debug_assertions) {
+                log_builder = log_builder.target(Target::new(TargetKind::Stdout));
             }
+            app.handle().plugin(log_builder.build())?;
             Ok(())
         })
         .run(tauri::generate_context!())

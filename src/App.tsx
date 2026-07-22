@@ -45,10 +45,10 @@ export default function App() {
           sizeMB: payload.sizeMB,
         }),
       onError: (payload) =>
-        updateDownloadStatus(payload.id, {
-          status: "error",
+        (updateDownloadStatus(payload.id, {
+          status: payload.cancelled ? "cancelled" : "error",
           errorMsg: payload.errorMsg,
-        }),
+        }), showAlert("Error de descarga", payload.errorMsg, "error")),
     });
   });
 
@@ -57,8 +57,6 @@ export default function App() {
 
   const handlePaste = async () => {
     const result = await pasteFromClipboard();
-
-    console.log(result)
 
     if (result.success && result.data) {
       setUrl(result.data);

@@ -4,11 +4,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::info;
+use log::{info, warn};
 use serde::Serialize;
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
 #[derive(Clone, Serialize)]
@@ -31,6 +32,8 @@ pub struct CompletePayload {
 pub struct ErrorPayload {
     pub id: String,
     pub error_msg: String,
+    #[serde(default)]
+    pub cancelled: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -48,6 +51,42 @@ pub type AppState = Arc<Mutex<DownloadManager>>;
 
 const YT_DLP_RESOURCE: &str = "tools/yt-dlp.exe";
 const FFMPEG_RESOURCE: &str = "tools/ffmpeg.exe";
+
+fn configure_child(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(0x08000000);
+    }
+}
+
+fn sanitized_url(url: &str) -> String {
+    url.split('?').next().unwrap_or(url).to_string()
+}
+
+fn classify_error(text: &str) -> &'static str {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("403") || lower.contains("forbidden") {
+        "Acceso rechazado (403). Actualiza yt-dlp o revisa autenticación."
+    } else if lower.contains("expired") || lower.contains("url has expired") {
+        "Enlace multimedia caducado. Reintenta la descarga."
+    } else if lower.contains("sign in")
+        || lower.contains("cookies")
+        || lower.contains("authentication")
+    {
+        "YouTube requiere autenticación o cookies."
+    } else if lower.contains("requested format") || lower.contains("format is not available") {
+        "Formato no disponible para este video."
+    } else if lower.contains("ffmpeg") || lower.contains("post-process") {
+        "Falló el procesamiento multimedia. Revisa ffmpeg."
+    } else if lower.contains("429")
+        || lower.contains("too many requests")
+        || lower.contains("rate limit")
+    {
+        "YouTube limitó las solicitudes. Espera y reintenta."
+    } else {
+        "No se pudo completar la descarga. Revisa el registro de diagnóstico."
+    }
+}
 
 fn resolve_tools(app: &AppHandle) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
     let resource_yt_dlp = app
@@ -85,7 +124,9 @@ pub async fn start_download(
 ) -> Result<StartDownloadResult, String> {
     info!(
         "start_download called: url={}, format={}, output_dir={}",
-        url, format, output_dir
+        sanitized_url(&url),
+        format,
+        output_dir
     );
 
     if !url.starts_with("http://") && !url.starts_with("https://") {
@@ -98,7 +139,9 @@ pub async fn start_download(
         "start_download: checking bundled yt-dlp at {:?}",
         yt_dlp_path
     );
-    let yt_dlp_check = Command::new(&yt_dlp_path)
+    let mut yt_dlp_check_cmd = Command::new(&yt_dlp_path);
+    configure_child(&mut yt_dlp_check_cmd);
+    let yt_dlp_check = yt_dlp_check_cmd
         .arg("--version")
         .output()
         .await
@@ -112,7 +155,9 @@ pub async fn start_download(
     }
 
     info!("start_download: checking ffmpeg...");
-    let ffmpeg_check = Command::new(&ffmpeg_path)
+    let mut ffmpeg_check_cmd = Command::new(&ffmpeg_path);
+    configure_child(&mut ffmpeg_check_cmd);
+    let ffmpeg_check = ffmpeg_check_cmd
         .arg("-version")
         .output()
         .await
@@ -128,12 +173,16 @@ pub async fn start_download(
     info!("start_download: fetching title...");
     let title = match tokio::time::timeout(
         Duration::from_secs(10),
-        Command::new(&yt_dlp_path)
-            .arg("--encoding")
-            .arg("utf-8")
-            .arg("--get-title")
-            .arg(&url)
-            .output(),
+        {
+            let mut command = Command::new(&yt_dlp_path);
+            configure_child(&mut command);
+            command
+        }
+        .arg("--encoding")
+        .arg("utf-8")
+        .arg("--get-title")
+        .arg(&url)
+        .output(),
     )
     .await
     {
@@ -217,6 +266,7 @@ fn spawn_download_task(
         info!("spawn_download_task: output template: {}", output_path_str);
 
         let mut cmd = Command::new(&yt_dlp_path);
+        configure_child(&mut cmd);
         cmd.arg("-f")
             .arg(format_selector)
             .arg("--newline")
@@ -253,6 +303,7 @@ fn spawn_download_task(
                     ErrorPayload {
                         id: id.clone(),
                         error_msg: format!("Error al iniciar yt-dlp: {}", e),
+                        cancelled: false,
                     },
                 );
                 let mut manager = state.lock().await;
@@ -264,38 +315,44 @@ fn spawn_download_task(
 
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
-        let mut reader = BufReader::new(stdout).lines();
-        let mut stderr_lines = Vec::new();
-
+        let (line_tx, mut line_rx) = mpsc::channel::<(bool, String)>(64);
+        let stdout_tx = line_tx.clone();
+        let stderr_tx = line_tx.clone();
+        let stdout_task = tokio::spawn(async move {
+            let mut reader = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                if stdout_tx.send((false, line)).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let stderr_task = tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                if stderr_tx.send((true, line)).await.is_err() {
+                    break;
+                }
+            }
+        });
+        drop(line_tx);
         let mut output_filename: Option<String> = None;
+        let mut stderr_tail: Vec<String> = Vec::new();
+        let mut stdout_tail: Vec<String> = Vec::new();
 
         loop {
             tokio::select! {
-                line = reader.next_line() => {
-                    match line {
-                        Ok(Some(trimmed)) => {
-                            if trimmed.is_empty() {
-                                continue;
-                            }
-
-                            if let Some(pct) = parse_progress(&trimmed) {
-                                let _ = app.emit(
-                                    "download_progress",
-                                    ProgressPayload {
-                                        id: id.clone(),
-                                        progress: pct,
-                                    },
-                                );
-                            } else if trimmed.starts_with("__BOLT_FILE__") {
-                                let path = normalize_reported_path(
-                                    trimmed.trim_start_matches("__BOLT_FILE__"),
-                                );
-                                info!("spawn_download_task: captured output filename: {}", path);
-                                output_filename = Some(path);
-                            }
-                        }
-                        Ok(None) => break,
-                        Err(_) => break,
+                line = line_rx.recv() => {
+                    let Some((is_stderr, trimmed)) = line else { break; };
+                    if trimmed.is_empty() { continue; }
+                    let tail = if is_stderr { &mut stderr_tail } else { &mut stdout_tail };
+                    tail.push(trimmed.clone());
+                    if tail.len() > 40 { tail.remove(0); }
+                    if let Some(pct) = parse_progress(&trimmed) {
+                        let _ = app.emit("download_progress", ProgressPayload { id: id.clone(), progress: pct });
+                    } else if trimmed.starts_with("__BOLT_FILE__") {
+                        let path = normalize_reported_path(trimmed.trim_start_matches("__BOLT_FILE__"));
+                        info!("download {} output filename: {}", id, path);
+                        output_filename = Some(path);
                     }
                 }
                 _ = tokio::time::sleep(Duration::from_millis(200)) => {
@@ -311,20 +368,17 @@ fn spawn_download_task(
                     ErrorPayload {
                         id: id.clone(),
                         error_msg: "Descarga cancelada por el usuario".into(),
+                        cancelled: true,
                     },
                 );
-                let mut manager = state.lock().await;
-                manager.cancel_flags.remove(&id);
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
                 return;
             }
         }
 
-        let mut stderr_reader = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = stderr_reader.next_line().await {
-            if !line.contains("WARNING") {
-                stderr_lines.push(line);
-            }
-        }
+        let _ = stdout_task.await;
+        let _ = stderr_task.await;
 
         let status = child.wait().await;
         info!("spawn_download_task: process exited, status={:?}", status);
@@ -351,18 +405,27 @@ fn spawn_download_task(
                 );
             }
             _ => {
-                let error_msg = if stderr_lines.is_empty() {
+                let diagnostic_tail = if stderr_tail.is_empty() {
+                    stdout_tail.join("\n")
+                } else {
+                    stderr_tail.join("\n")
+                };
+                let error_msg = if diagnostic_tail.is_empty() {
                     "Error desconocido durante la descarga".into()
                 } else {
-                    stderr_lines.join("\n")
+                    format!("{} {}", classify_error(&diagnostic_tail), diagnostic_tail)
                 };
 
-                info!("spawn_download_task: download error: {}", error_msg);
+                warn!(
+                    "download {} failed: status={:?}, stderr_tail={:?}, stdout_tail={:?}",
+                    id, status, stderr_tail, stdout_tail
+                );
                 let _ = app.emit(
                     "download_error",
                     ErrorPayload {
                         id: id.clone(),
                         error_msg,
+                        cancelled: false,
                     },
                 );
             }
@@ -400,8 +463,8 @@ fn normalize_reported_path(path: &str) -> String {
 #[tauri::command]
 pub async fn cancel_download(id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     info!("cancel_download called: id={}", id);
-    let mut manager = state.lock().await;
-    if let Some(flag) = manager.cancel_flags.remove(&id) {
+    let manager = state.lock().await;
+    if let Some(flag) = manager.cancel_flags.get(&id) {
         info!("cancel_download: flag found, setting cancel");
         flag.store(true, Ordering::SeqCst);
         Ok(())
@@ -418,13 +481,35 @@ pub async fn open_file(file_path: String) -> Result<(), String> {
     if path.is_empty() {
         return Err("Ruta de archivo vacía".into());
     }
+    let file = Path::new(path);
+    if !file.is_file() {
+        return Err("El archivo no existe o no es un archivo válido".into());
+    }
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/c", "start", "", path])
-            .spawn()
-            .map_err(|e| format!("Error al abrir archivo: {}", e))?;
+        use std::os::windows::ffi::OsStrExt;
+        let operation: Vec<u16> = std::ffi::OsStr::new("open")
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        let wide_path: Vec<u16> = file.as_os_str().encode_wide().chain(Some(0)).collect();
+        let result = unsafe {
+            windows_sys::Win32::UI::Shell::ShellExecuteW(
+                std::ptr::null_mut(),
+                operation.as_ptr(),
+                wide_path.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+            )
+        };
+        if result as usize <= 32 {
+            return Err(format!(
+                "Error al abrir archivo (código {})",
+                result as usize
+            ));
+        }
     }
     #[cfg(target_os = "macos")]
     {
@@ -450,10 +535,13 @@ pub async fn open_in_folder(file_path: String) -> Result<(), String> {
     if path.is_empty() {
         return Err("Ruta de archivo vacía".into());
     }
+    if !Path::new(path).is_file() {
+        return Err("El archivo no existe o no es un archivo válido".into());
+    }
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer")
+        std::process::Command::new("explorer.exe")
             .arg("/select,")
             .arg(path)
             .spawn()
@@ -511,7 +599,9 @@ pub async fn perform_yt_dlp_update(
         .map_err(|e| format!("No se pudo preparar copia de seguridad de yt-dlp: {}", e))?;
 
     info!("perform_yt_dlp_update: running bundled writable yt-dlp -U");
-    let output = tokio::process::Command::new(&yt_dlp_path)
+    let mut update_cmd = tokio::process::Command::new(&yt_dlp_path);
+    configure_child(&mut update_cmd);
+    let output = update_cmd
         .arg("-U")
         .arg("--no-color")
         .output()
@@ -527,7 +617,13 @@ pub async fn perform_yt_dlp_update(
         .collect::<Vec<_>>()
         .join("\n");
 
-    if output.status.success() || combined.to_lowercase().contains("up to date") {
+    let executable_is_valid = yt_dlp_path.is_file()
+        && std::fs::metadata(&yt_dlp_path)
+            .map(|metadata| metadata.len() > 0)
+            .unwrap_or(false);
+    if executable_is_valid
+        && (output.status.success() || combined.to_lowercase().contains("up to date"))
+    {
         let _ = std::fs::remove_file(&backup_path);
         info!("perform_yt_dlp_update: success");
         Ok(YtDlpUpdateResult {

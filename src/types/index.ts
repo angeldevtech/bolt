@@ -33,6 +33,7 @@ export interface ICompletePayload {
 export interface IErrorPayload {
   id: string;
   errorMsg: string;
+  cancelled?: boolean;
 }
 
 // A standard response wrapper for API calls

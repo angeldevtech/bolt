@@ -13,7 +13,7 @@ import { createMemo } from "solid-js";
 import { type IDownloadItem } from "../../types";
 import { Button } from "../ui/Button";
 import { openFile, openInFolder, deleteToTrash, cancelDownload } from "../../lib/api";
-import { retryDownload, removeDownload, updateDownloadStatus } from "../../store/downloads";
+import { retryDownload, removeDownload } from "../../store/downloads";
 import { showAlert } from "../ui/Toaster";
 
 function getYouTubeThumbnail(url: string): string | null {
@@ -61,12 +61,21 @@ export function DownloadItem(props: IDownloadItemProps) {
   };
 
   const handleOpen = async () => {
-    await openInFolder(props.item.filePath!);
+    if (!props.item.filePath) {
+      showAlert("Archivo no disponible", "No hay una ruta válida para esta descarga.", "error");
+      return;
+    }
+    const result = await openInFolder(props.item.filePath);
+    if (!result.success) showAlert("No se pudo abrir la carpeta", result.error, "error");
   };
 
   const handleCancel = async () => {
-    await cancelDownload(props.item.id);
-    await updateDownloadStatus(props.item.id, { status: "cancelled" });
+    const result = await cancelDownload(props.item.id);
+    if (result.success) {
+      showAlert("Cancelación solicitada", "La descarga se marcará como cancelada cuando termine el proceso.", "info");
+    } else {
+      showAlert("No se pudo cancelar", result.error, "error");
+    }
   };
 
   const thumbnailUrl = createMemo(() => getYouTubeThumbnail(props.item.url));
@@ -177,7 +186,14 @@ export function DownloadItem(props: IDownloadItemProps) {
               <>
                 <Button
                   variant="surface"
-                  onClick={() => openFile(props.item.filePath!)}
+                   onClick={async () => {
+                     if (!props.item.filePath) {
+                       showAlert("Archivo no disponible", "No hay una ruta válida para esta descarga.", "error");
+                       return;
+                     }
+                     const result = await openFile(props.item.filePath);
+                     if (!result.success) showAlert("No se pudo abrir el archivo", result.error, "error");
+                   }}
                 >
                   <Play size={12} fill="currentColor" /> REPRODUCIR
                 </Button>

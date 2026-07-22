@@ -8,6 +8,9 @@ repository = ""
 edition = "2021"
 rust-version = "1.77.2"
 
+[features]
+diagnostic = []
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
@@ -32,3 +35,6 @@ tauri-plugin-clipboard-manager = "2"
 uuid = { version = "1", features = ["v4"] }
 trash = "5"
 tokio = { version = "1", features = ["process", "sync", "io-util"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
