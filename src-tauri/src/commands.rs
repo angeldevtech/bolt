@@ -1,10 +1,11 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Output;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::{info, warn};
+use log::{error, info};
 use serde::Serialize;
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -51,6 +52,15 @@ pub type AppState = Arc<Mutex<DownloadManager>>;
 
 const YT_DLP_RESOURCE: &str = "tools/yt-dlp.exe";
 const FFMPEG_RESOURCE: &str = "tools/ffmpeg.exe";
+const DENO_RESOURCE: &str = "tools/deno.exe";
+
+#[derive(Clone)]
+struct ResolvedTools {
+    packaged_yt_dlp: PathBuf,
+    yt_dlp: PathBuf,
+    ffmpeg: PathBuf,
+    deno: PathBuf,
+}
 
 fn configure_child(cmd: &mut Command) {
     #[cfg(windows)]
@@ -65,7 +75,12 @@ fn sanitized_url(url: &str) -> String {
 
 fn classify_error(text: &str) -> &'static str {
     let lower = text.to_ascii_lowercase();
-    if lower.contains("403") || lower.contains("forbidden") {
+    if lower.contains("no supported javascript runtime")
+        || lower.contains("javascript runtime")
+        || lower.contains("js runtime")
+    {
+        "Falta la dependencia de JavaScript incluida (Deno)."
+    } else if lower.contains("403") || lower.contains("forbidden") {
         "Acceso rechazado (403). Actualiza yt-dlp o revisa autenticación."
     } else if lower.contains("expired") || lower.contains("url has expired") {
         "Enlace multimedia caducado. Reintenta la descarga."
@@ -88,30 +103,260 @@ fn classify_error(text: &str) -> &'static str {
     }
 }
 
-fn resolve_tools(app: &AppHandle) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
-    let resource_yt_dlp = app
+fn resolve_resource(app: &AppHandle, resource: &str, label: &str) -> Result<PathBuf, String> {
+    let path = app
         .path()
-        .resolve(YT_DLP_RESOURCE, BaseDirectory::Resource)
-        .map_err(|e| format!("No se pudo localizar yt-dlp incluido: {}", e))?;
-    let ffmpeg = app
-        .path()
-        .resolve(FFMPEG_RESOURCE, BaseDirectory::Resource)
-        .map_err(|e| format!("No se pudo localizar ffmpeg incluido: {}", e))?;
+        .resolve(resource, BaseDirectory::Resource)
+        .map_err(|error| {
+            format!(
+                "No se pudo resolver {} incluido ({}) desde recursos de la aplicación: {}",
+                label, resource, error
+            )
+        })?;
+
+    match std::fs::metadata(&path) {
+        Ok(metadata) if metadata.is_file() => Ok(path),
+        Ok(_) => Err(format!(
+            "El recurso {} no es un archivo ejecutable: {}",
+            label,
+            path.display()
+        )),
+        Err(error) => Err(format!(
+            "No se pudo acceder al recurso {} en {}: {}",
+            label,
+            path.display(),
+            error
+        )),
+    }
+}
+
+fn resolve_tools(app: &AppHandle) -> Result<ResolvedTools, String> {
+    let packaged_yt_dlp = resolve_resource(app, YT_DLP_RESOURCE, "yt-dlp")?;
+    let ffmpeg = resolve_resource(app, FFMPEG_RESOURCE, "ffmpeg")?;
+    let deno = resolve_resource(app, DENO_RESOURCE, "Deno")?;
     let app_tools = app
         .path()
         .app_local_data_dir()
-        .map_err(|e| format!("No se pudo localizar AppLocalData: {}", e))?
+        .map_err(|error| format!("No se pudo localizar AppLocalData: {}", error))?
         .join("tools");
     let writable_yt_dlp = app_tools.join("yt-dlp.exe");
 
-    std::fs::create_dir_all(&app_tools)
-        .map_err(|e| format!("No se pudo preparar AppLocalData: {}", e))?;
-    if !writable_yt_dlp.is_file() {
-        std::fs::copy(&resource_yt_dlp, &writable_yt_dlp)
-            .map_err(|e| format!("No se pudo restaurar yt-dlp incluido: {}", e))?;
+    std::fs::create_dir_all(&app_tools).map_err(|error| {
+        format!(
+            "No se pudo preparar la carpeta de herramientas en {}: {}",
+            app_tools.display(),
+            error
+        )
+    })?;
+
+    Ok(ResolvedTools {
+        packaged_yt_dlp,
+        yt_dlp: writable_yt_dlp,
+        ffmpeg,
+        deno,
+    })
+}
+
+fn bounded_text(text: &str) -> String {
+    const MAX_CHARS: usize = 2_000;
+    let trimmed = text.trim();
+    let bounded: String = trimmed.chars().take(MAX_CHARS).collect();
+    if bounded.chars().count() < trimmed.chars().count() {
+        format!("{}...", bounded)
+    } else {
+        bounded
+    }
+}
+
+fn process_output_detail(output: &Output) -> String {
+    let stderr = bounded_text(&String::from_utf8_lossy(&output.stderr));
+    if !stderr.is_empty() {
+        return stderr;
     }
 
-    Ok((writable_yt_dlp, ffmpeg))
+    bounded_text(&String::from_utf8_lossy(&output.stdout))
+}
+
+async fn verify_executable(path: &Path, label: &str, args: &[&str]) -> Result<(), String> {
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => {
+            return Err(format!(
+                "Dependencia {} inválida: {} no es un archivo",
+                label,
+                path.display()
+            ));
+        }
+        Err(error) => {
+            return Err(format!(
+                "Dependencia {} no disponible en {}: {}",
+                label,
+                path.display(),
+                error
+            ));
+        }
+    }
+
+    let mut command = Command::new(path);
+    configure_child(&mut command);
+    let output = command.args(args).output().await.map_err(|error| {
+        format!(
+            "Dependencia {} no pudo ejecutarse en {}: {}",
+            label,
+            path.display(),
+            error
+        )
+    })?;
+
+    if !output.status.success() {
+        let detail = process_output_detail(&output);
+        let detail = if detail.is_empty() {
+            "sin salida del proceso".to_string()
+        } else {
+            detail
+        };
+        return Err(format!(
+            "Dependencia {} no pudo ejecutarse en {} ({}): {}",
+            label,
+            path.display(),
+            output.status,
+            detail
+        ));
+    }
+
+    Ok(())
+}
+
+fn restore_executable_atomically(source: &Path, destination: &Path) -> Result<(), String> {
+    let parent = destination.parent().ok_or_else(|| {
+        format!(
+            "No se pudo determinar carpeta de destino para {}",
+            destination.display()
+        )
+    })?;
+    let temporary = parent.join(format!(".yt-dlp-restore-{}.tmp", uuid::Uuid::new_v4()));
+
+    std::fs::copy(source, &temporary).map_err(|error| {
+        let _ = std::fs::remove_file(&temporary);
+        format!(
+            "No se pudo copiar yt-dlp incluido desde {} a {}: {}",
+            source.display(),
+            temporary.display(),
+            error
+        )
+    })?;
+
+    let backup = parent.join(format!(".yt-dlp-restore-{}.bak", uuid::Uuid::new_v4()));
+    let had_destination = match std::fs::metadata(destination) {
+        Ok(metadata) if metadata.is_file() => true,
+        Ok(_) => {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(format!(
+                "No se pudo restaurar yt-dlp porque destino no es un archivo: {}",
+                destination.display()
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(format!(
+                "No se pudo inspeccionar yt-dlp app-local en {}: {}",
+                destination.display(),
+                error
+            ));
+        }
+    };
+
+    if had_destination {
+        if let Err(error) = std::fs::rename(destination, &backup) {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(format!(
+                "No se pudo apartar yt-dlp inválido en {}: {}",
+                destination.display(),
+                error
+            ));
+        }
+    }
+
+    if let Err(error) = std::fs::rename(&temporary, destination) {
+        let restore_error = if had_destination {
+            std::fs::rename(&backup, destination).err()
+        } else {
+            None
+        };
+        let _ = std::fs::remove_file(&temporary);
+        return Err(match restore_error {
+            Some(restore_error) => format!(
+                "No se pudo reemplazar yt-dlp en {}: {}; tampoco se pudo restaurar copia anterior: {}",
+                destination.display(),
+                error,
+                restore_error
+            ),
+            None => format!(
+                "No se pudo reemplazar yt-dlp en {}: {}",
+                destination.display(),
+                error
+            ),
+        });
+    }
+
+    if had_destination {
+        let _ = std::fs::remove_file(&backup);
+    }
+
+    Ok(())
+}
+
+async fn ensure_app_local_yt_dlp(tools: &ResolvedTools) -> Result<(), String> {
+    if let Err(original_error) =
+        verify_executable(&tools.yt_dlp, "yt-dlp app-local", &["--version"]).await
+    {
+        info!(
+            "yt-dlp app-local inválido en {}: {}; restaurando desde {}",
+            tools.yt_dlp.display(),
+            original_error,
+            tools.packaged_yt_dlp.display()
+        );
+        restore_executable_atomically(&tools.packaged_yt_dlp, &tools.yt_dlp).map_err(
+            |restore_error| {
+                format!(
+                    "yt-dlp app-local no pudo validarse ({}). No se pudo restaurar desde {} a {}: {}",
+                    original_error,
+                    tools.packaged_yt_dlp.display(),
+                    tools.yt_dlp.display(),
+                    restore_error
+                )
+            },
+        )?;
+
+        verify_executable(&tools.yt_dlp, "yt-dlp app-local restaurado", &["--version"])
+            .await
+            .map_err(|error| {
+                format!(
+                    "yt-dlp restaurado desde {} no pudo ejecutarse en {}: {}",
+                    tools.packaged_yt_dlp.display(),
+                    tools.yt_dlp.display(),
+                    error
+                )
+            })?;
+    }
+
+    Ok(())
+}
+
+async fn preflight_tools(tools: &ResolvedTools) -> Result<(), String> {
+    ensure_app_local_yt_dlp(tools).await?;
+    verify_executable(&tools.ffmpeg, "ffmpeg incluido", &["-version"]).await?;
+    verify_executable(
+        &tools.deno,
+        "Deno incluido (runtime JavaScript)",
+        &["--version"],
+    )
+    .await
+}
+
+fn deno_runtime_arg(path: &Path) -> String {
+    format!("deno:{}", path.display())
 }
 
 #[tauri::command]
@@ -134,50 +379,24 @@ pub async fn start_download(
         return Err("URL inválida. Debe comenzar con http:// o https://".into());
     }
 
-    let (yt_dlp_path, ffmpeg_path) = resolve_tools(&app)?;
+    let tools = resolve_tools(&app)?;
+    preflight_tools(&tools).await?;
     info!(
         "start_download: checking bundled yt-dlp at {:?}",
-        yt_dlp_path
+        tools.yt_dlp
     );
-    let mut yt_dlp_check_cmd = Command::new(&yt_dlp_path);
-    configure_child(&mut yt_dlp_check_cmd);
-    let yt_dlp_check = yt_dlp_check_cmd
-        .arg("--version")
-        .output()
-        .await
-        .map_err(|_| {
-            "yt-dlp incluido no pudo ejecutarse. Revisa el archivo de la aplicación.".to_string()
-        })?;
-
-    if !yt_dlp_check.status.success() {
-        info!("start_download: yt-dlp not found");
-        return Err("yt-dlp no encontrado".to_string());
-    }
-
-    info!("start_download: checking ffmpeg...");
-    let mut ffmpeg_check_cmd = Command::new(&ffmpeg_path);
-    configure_child(&mut ffmpeg_check_cmd);
-    let ffmpeg_check = ffmpeg_check_cmd
-        .arg("-version")
-        .output()
-        .await
-        .map_err(|_| {
-            "ffmpeg incluido no pudo ejecutarse. Revisa el archivo de la aplicación.".to_string()
-        })?;
-
-    if !ffmpeg_check.status.success() {
-        info!("start_download: ffmpeg not found");
-        return Err("ffmpeg no encontrado".to_string());
-    }
 
     info!("start_download: fetching title...");
     let title = match tokio::time::timeout(
         Duration::from_secs(10),
         {
-            let mut command = Command::new(&yt_dlp_path);
+            let mut command = Command::new(&tools.yt_dlp);
             configure_child(&mut command);
             command
         }
+        .arg("--ignore-config")
+        .arg("--js-runtimes")
+        .arg(deno_runtime_arg(&tools.deno))
         .arg("--encoding")
         .arg("utf-8")
         .arg("--get-title")
@@ -220,8 +439,7 @@ pub async fn start_download(
         format,
         output_dir,
         cancel_flag,
-        yt_dlp_path,
-        ffmpeg_path,
+        tools,
     );
 
     Ok(result)
@@ -235,8 +453,7 @@ fn spawn_download_task(
     format: String,
     output_dir: String,
     cancel_flag: Arc<AtomicBool>,
-    yt_dlp_path: std::path::PathBuf,
-    ffmpeg_path: std::path::PathBuf,
+    tools: ResolvedTools,
 ) {
     info!(
         "spawn_download_task: starting for id={}, format={}",
@@ -265,18 +482,21 @@ fn spawn_download_task(
         let output_path_str = output_path.to_string_lossy().to_string();
         info!("spawn_download_task: output template: {}", output_path_str);
 
-        let mut cmd = Command::new(&yt_dlp_path);
+        let mut cmd = Command::new(&tools.yt_dlp);
         configure_child(&mut cmd);
         cmd.arg("-f")
             .arg(format_selector)
             .arg("--newline")
+            .arg("--ignore-config")
+            .arg("--js-runtimes")
+            .arg(deno_runtime_arg(&tools.deno))
             .arg("--encoding")
             .arg("utf-8")
             // Keep Unicode title characters and let yt-dlp report final path directly.
             .arg("--no-restrict-filenames")
             .arg("--no-windows-filenames")
             .arg("--ffmpeg-location")
-            .arg(ffmpeg_path.parent().unwrap_or(&ffmpeg_path))
+            .arg(tools.ffmpeg.parent().unwrap_or(&tools.ffmpeg))
             .arg("--embed-thumbnail")
             .arg("--add-metadata")
             .arg("-o")
@@ -416,7 +636,7 @@ fn spawn_download_task(
                     format!("{} {}", classify_error(&diagnostic_tail), diagnostic_tail)
                 };
 
-                warn!(
+                error!(
                     "download {} failed: status={:?}, stderr_tail={:?}, stdout_tail={:?}",
                     id, status, stderr_tail, stdout_tail
                 );
@@ -593,7 +813,9 @@ pub async fn perform_yt_dlp_update(
         return Err("No se puede actualizar mientras haya descargas activas.".into());
     }
 
-    let (yt_dlp_path, _) = resolve_tools(&app)?;
+    let tools = resolve_tools(&app)?;
+    ensure_app_local_yt_dlp(&tools).await?;
+    let yt_dlp_path = tools.yt_dlp;
     let backup_path = yt_dlp_path.with_extension("exe.bak");
     std::fs::copy(&yt_dlp_path, &backup_path)
         .map_err(|e| format!("No se pudo preparar copia de seguridad de yt-dlp: {}", e))?;
@@ -603,6 +825,7 @@ pub async fn perform_yt_dlp_update(
     configure_child(&mut update_cmd);
     let output = update_cmd
         .arg("-U")
+        .arg("--ignore-config")
         .arg("--no-color")
         .output()
         .await

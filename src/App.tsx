@@ -95,7 +95,9 @@ export default function App() {
     if (result.id && result.title) {
       updateDownloadStatus(tempId, { id: result.id, title: result.title, status: "downloading" });
     } else {
-      updateDownloadStatus(tempId, { status: "error", errorMsg: result.error || "Error desconocido" });
+      const errorMessage = result.error?.trim() || "Error desconocido";
+      updateDownloadStatus(tempId, { status: "error", errorMsg: errorMessage });
+      showAlert("Error de descarga", errorMessage, "error");
     }
   };
 

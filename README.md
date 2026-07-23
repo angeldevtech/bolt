@@ -71,8 +71,10 @@ src-tauri/target/release/app.exe
 src-tauri/target/release/bundle/nsis/Bolt_0.1.0_x64-setup.exe
 ```
 
-The NSIS installer is unsigned. It includes yt-dlp and ffmpeg, so users do not
-need Python, PATH configuration, or a package manager.
+The NSIS installer is the supported release artifact. It includes yt-dlp, ffmpeg,
+and Deno, so users do not need Node, Deno, Bun, Python, yt-dlp, FFmpeg, PATH
+configuration, or a package manager. `target/release/app.exe` is not a supported
+portable release.
 
 ### Diagnostic build
 
@@ -84,9 +86,9 @@ bun run build:tauri:diagnostic
 ```
 
 This command uses Cargo feature `diagnostic` explicitly. It produces the same
-output paths as production, so run it after production build when investigating
-an issue. Copy or rename artifacts before generating another build if both are
-needed.
+output paths and bundled tools as production, so run it after production build when
+investigating an issue. Copy or rename artifacts before generating another build if
+both are needed.
 
 Diagnostic output:
 
@@ -110,7 +112,7 @@ the bundled binaries, installer hashes, signatures, and Defender/EDR results.
 ## Notes
 
 * Windows x64 is supported for MVP release builds.
-* yt-dlp and ffmpeg are bundled from `binaries/`.
+* yt-dlp, ffmpeg, and pinned Deno are bundled from `binaries/`.
 * Update action requires internet access and can be affected by antivirus or
   locked files.
 

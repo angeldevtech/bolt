@@ -30,7 +30,8 @@
     "targets": ["nsis"],
     "resources": {
       "../binaries/yt-dlp.exe": "tools/yt-dlp.exe",
-      "../binaries/ffmpeg.exe": "tools/ffmpeg.exe"
+      "../binaries/ffmpeg.exe": "tools/ffmpeg.exe",
+      "../binaries/deno.exe": "tools/deno.exe"
     },
     "icon": [
       "icons/32x32.png",
