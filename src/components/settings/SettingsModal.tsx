@@ -103,13 +103,15 @@ export function SettingsModal(props: ISettingsModalProps) {
   // Explicit Save
   const handleSave = async () => {
     // Write draft state to global store and persist to disk
-    await updateAllSettings(draftSettings());
+    const result = await updateAllSettings(draftSettings());
 
     closeModal();
     showAlert(
-      "Ajustes Guardados",
-      "Los cambios se aplicarán a las nuevas descargas.", // Clear UX feedback
-      "success",
+      result.success ? "Ajustes Guardados" : "Ajustes aplicados con errores",
+      result.success
+        ? "Los cambios se aplicarán a las nuevas descargas."
+        : result.error || "No se pudieron sincronizar todos los ajustes.",
+      result.success ? "success" : "error",
     );
   };
 

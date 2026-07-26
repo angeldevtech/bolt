@@ -9,20 +9,29 @@ import {
 } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
-import { exists, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import {
+  exists,
+  readTextFile,
+  rename,
+  writeTextFile,
+} from "@tauri-apps/plugin-fs";
 import { load } from "@tauri-apps/plugin-store";
 import {
   type TFormat,
   type IAppSettings,
   type IActionResult,
-  type IDownloadItem,
+  type IYtDlpUpdateCheckResult,
   type IYtDlpUpdateResult,
-  type TDownloadStatus,
 } from "../types";
-import { DEFAULT_MAX_CONCURRENT } from "../constants";
+import {
+  DEFAULT_MAX_CONCURRENT,
+  DOWNLOAD_CONCURRENCY_OPTIONS,
+} from "../constants";
+import { createTauriHistoryPersistence } from "./tauri-history";
 
 const SETTINGS_FILE = "settings.json";
 const HISTORY_FILE = "history.json";
+const HISTORY_TEMP_FILE = "history.tmp.json";
 
 // --- CLIPBOARD ---
 export async function pasteFromClipboard(): Promise<IActionResult<string>> {
@@ -48,6 +57,33 @@ export async function pasteFromClipboard(): Promise<IActionResult<string>> {
 }
 
 // --- UPDATES (yt-dlp) ---
+let activeYtDlpCheck:
+  | Promise<IActionResult<IYtDlpUpdateCheckResult>>
+  | undefined;
+
+export function checkYtDlpUpdate(): Promise<IActionResult<IYtDlpUpdateCheckResult>> {
+  if (activeYtDlpCheck) return activeYtDlpCheck;
+
+  const request = invoke<IYtDlpUpdateCheckResult>("check_yt_dlp_update")
+    .then((result) => ({ success: true, data: result }))
+    .catch((error) => ({
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+
+  activeYtDlpCheck = request;
+  void request.then(
+    () => {
+      if (activeYtDlpCheck === request) activeYtDlpCheck = undefined;
+    },
+    () => {
+      if (activeYtDlpCheck === request) activeYtDlpCheck = undefined;
+    },
+  );
+
+  return request;
+}
+
 export async function performYtDlpUpdate(): Promise<IActionResult<IYtDlpUpdateResult>> {
   try {
     const result = await invoke<IYtDlpUpdateResult>("perform_yt_dlp_update");
@@ -80,19 +116,34 @@ export async function promptForFolder(
 
 // --- DOWNLOAD COMMANDS ---
 export async function startDownload(
+  id: string,
   url: string,
   format: TFormat,
   outputDir: string,
 ): Promise<{ id?: string; title?: string; error?: string }> {
   try {
     const result = await invoke<{ id: string; title: string }>("start_download", {
+      id,
       url,
       format,
       outputDir,
     });
     return { id: result.id, title: result.title };
   } catch (error) {
-    return { error: String(error) };
+    return { id, error: String(error) };
+  }
+}
+
+export async function setDownloadConcurrency(
+  maxConcurrent: number,
+): Promise<IActionResult<number>> {
+  try {
+    const limit = await invoke<number>("set_download_concurrency", {
+      maxConcurrent,
+    });
+    return { success: true, data: limit };
+  } catch (error) {
+    return { success: false, error: String(error) };
   }
 }
 
@@ -190,14 +241,30 @@ function normalizeSettings(
   stored: Partial<IAppSettings> | null | undefined,
   defaults: IAppSettings,
 ): IAppSettings {
+  const maxConcurrent = normalizeMaxConcurrent(
+    stored?.maxConcurrent,
+    defaults.maxConcurrent,
+  );
+
   return {
     audioFolder: stored?.audioFolder?.trim() || defaults.audioFolder,
     videoFolder: stored?.videoFolder?.trim() || defaults.videoFolder,
-    maxConcurrent:
-      typeof stored?.maxConcurrent === "number" && stored.maxConcurrent > 0
-        ? stored.maxConcurrent
-        : defaults.maxConcurrent,
+    maxConcurrent,
   };
+}
+
+function normalizeMaxConcurrent(value: unknown, fallback: number): number {
+  const minimum = DOWNLOAD_CONCURRENCY_OPTIONS[0];
+  const maximum = DOWNLOAD_CONCURRENCY_OPTIONS[DOWNLOAD_CONCURRENCY_OPTIONS.length - 1];
+  const fallbackValue = Number.isFinite(fallback)
+    ? Math.min(maximum, Math.max(minimum, Math.trunc(fallback)))
+    : minimum;
+
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return fallbackValue;
+  }
+
+  return Math.min(maximum, Math.max(minimum, Math.trunc(value)));
 }
 
 async function readStoredSettings(): Promise<Partial<IAppSettings> | null> {
@@ -274,70 +341,39 @@ export async function saveSettings(
 }
 
 // --- HISTORY PERSISTENCE (plugin-fs) ---
-function recoverInterruptedDownloads(
-  history: IDownloadItem[],
-): IDownloadItem[] {
-  return history.map((item) => {
-    if (item.status === "downloading" || item.status === "pending") {
-      return {
-        ...item,
-        status: "error" as TDownloadStatus,
-        errorMsg: "Descarga interrumpida por cierre de la aplicación.",
-      };
-    }
-
-    return item;
-  });
-}
 
 export async function getHistoryPath(): Promise<string> {
   const base = await appLocalDataDir();
   return await join(base, HISTORY_FILE);
 }
 
-export async function loadHistorySafe(): Promise<{
-  data: IDownloadItem[];
-  wasCorrupted: boolean;
-}> {
-  try {
-    const historyExists = await exists(HISTORY_FILE, {
-      baseDir: BaseDirectory.AppLocalData,
-    });
+const historyPersistence = createTauriHistoryPersistence(
+  {
+    exists: (path) =>
+      exists(path, {
+        baseDir: BaseDirectory.AppLocalData,
+      }),
+    readTextFile: (path) =>
+      readTextFile(path, {
+        baseDir: BaseDirectory.AppLocalData,
+      }),
+    writeTextFile: (path, contents) =>
+      writeTextFile(path, contents, {
+        baseDir: BaseDirectory.AppLocalData,
+      }),
+    rename: (oldPath, newPath) =>
+      rename(oldPath, newPath, {
+        oldPathBaseDir: BaseDirectory.AppLocalData,
+        newPathBaseDir: BaseDirectory.AppLocalData,
+      }),
+  },
+  {
+    historyFile: HISTORY_FILE,
+    temporaryFile: HISTORY_TEMP_FILE,
+    createCorruptionBackupPath: () =>
+      `history.corrupt-${Date.now()}-${crypto.randomUUID()}.json`,
+  },
+);
 
-    if (!historyExists) {
-      console.info("[history] No history.json found in AppLocalData");
-      return { data: [], wasCorrupted: false };
-    }
-
-    const rawHistory = await readTextFile(HISTORY_FILE, {
-      baseDir: BaseDirectory.AppLocalData,
-    });
-    const history = JSON.parse(rawHistory) as IDownloadItem[];
-    const recoveredHistory = recoverInterruptedDownloads(history);
-
-    if (JSON.stringify(recoveredHistory) !== JSON.stringify(history)) {
-      await saveHistory(recoveredHistory);
-    }
-
-    console.info("[history] Loaded history from AppLocalData", {
-      path: await getHistoryPath(),
-      count: recoveredHistory.length,
-    });
-
-    return { data: recoveredHistory, wasCorrupted: false };
-  } catch (error) {
-    console.error("[history] History file corrupted. Resetting...", error);
-    await saveHistory([]);
-    return { data: [], wasCorrupted: true };
-  }
-}
-
-export async function saveHistory(history: IDownloadItem[]): Promise<void> {
-  try {
-    await writeTextFile(HISTORY_FILE, JSON.stringify(history, null, 2), {
-      baseDir: BaseDirectory.AppLocalData,
-    });
-  } catch (error) {
-    console.error("[history] Failed to save history", error);
-  }
-}
+export const loadHistorySafe = historyPersistence.loadHistorySafe;
+export const saveHistory = historyPersistence.saveHistory;

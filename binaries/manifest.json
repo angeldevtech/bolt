@@ -1,0 +1,37 @@
+{
+  "platform": "windows-x64",
+  "tools": [
+    {
+      "name": "yt-dlp",
+      "file": "yt-dlp.exe",
+      "version": "2026.07.04",
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp.exe",
+      "sourceUrl": "https://github.com/yt-dlp/yt-dlp/tree/2026.07.04",
+      "sha256": "52fe3c26dcf71fbdc85b528589020bb0b8e383155cfa81b64dd447bbe35e24b8",
+      "license": "GPL-3.0-or-later"
+    },
+    {
+      "name": "ffmpeg",
+      "file": "ffmpeg.exe",
+      "version": "N-125767-gd09db42d8f",
+      "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-07-25-15-15/ffmpeg-N-125767-gd09db42d8f-win64-gpl.zip",
+      "sourceUrl": "https://github.com/yt-dlp/FFmpeg-Builds/tree/autobuild-2026-07-25-15-15",
+      "ffmpegSourceUrl": "https://github.com/FFmpeg/FFmpeg/commit/d09db42d8f6b1665fb4bdbdd92f78c1e6be908f7",
+      "archiveSha256": "f368cbd8b9ae6d730c511320bd11acc6da40fc8651f4e20ee1f99427f7ef9fa6",
+      "archivePath": "ffmpeg-N-125767-gd09db42d8f-win64-gpl/bin/ffmpeg.exe",
+      "sha256": "812f647456e38a0e6d87b34e3444da798a6c5ff2877168080dbbf992da076e63",
+      "license": "GPL-3.0-or-later"
+    },
+    {
+      "name": "deno",
+      "file": "deno.exe",
+      "version": "2.9.3",
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.3/deno-x86_64-pc-windows-msvc.zip",
+      "sourceUrl": "https://github.com/denoland/deno/tree/v2.9.3",
+      "archiveSha256": "60343461ac5fe3a31f4ef12667f2946bb852e20655c8610aeb7e751e87f7df3a",
+      "archivePath": "deno.exe",
+      "sha256": "bc925c8729f8764f750597f3a5a365f2a2dedc0c64d21a2997bc5f2255658fc9",
+      "license": "MIT"
+    }
+  ]
+}

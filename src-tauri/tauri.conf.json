@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "bun run dev",
-    "beforeBuildCommand": "bun x vite build"
+    "beforeBuildCommand": "bun run prepare:binaries && bun x vite build"
   },
   "app": {
     "windows": [
@@ -31,7 +31,9 @@
     "resources": {
       "../binaries/yt-dlp.exe": "tools/yt-dlp.exe",
       "../binaries/ffmpeg.exe": "tools/ffmpeg.exe",
-      "../binaries/deno.exe": "tools/deno.exe"
+      "../binaries/deno.exe": "tools/deno.exe",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../LICENSE": "LICENSE"
     },
     "icon": [
       "icons/32x32.png",

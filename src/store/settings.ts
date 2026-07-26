@@ -1,7 +1,13 @@
 import { createStore } from "solid-js/store";
-import { loadSettingsSafe, saveSettings, promptForFolder } from "../lib/api";
+import {
+  loadSettingsSafe,
+  saveSettings,
+  promptForFolder,
+  setDownloadConcurrency,
+} from "../lib/api";
 import { showAlert } from "../components/ui/Toaster";
-import type { IAppSettings } from "../types";
+import type { IActionResult, IAppSettings } from "../types";
+import { DOWNLOAD_CONCURRENCY_OPTIONS } from "../constants";
 
 // Create a global store
 export const [settings, setSettings] = createStore<IAppSettings>({
@@ -15,6 +21,11 @@ export const initSettings = async () => {
   console.info("[settings] initSettings result", result);
   setSettings(result.data);
 
+  const backendResult = await setDownloadConcurrency(result.data.maxConcurrent);
+  if (!backendResult.success) {
+    showAlert("Error de configuración", backendResult.error, "error");
+  }
+
   if (result.wasCorrupted) {
     showAlert(
       "Ajustes Restaurados",
@@ -24,14 +35,45 @@ export const initSettings = async () => {
   }
 };
 
-export const updateAllSettings = async (newSettings: IAppSettings) => {
-  console.info("[settings] updateAllSettings", newSettings);
-  setSettings(newSettings);
-  const result = await saveSettings(newSettings);
+export const updateAllSettings = async (
+  newSettings: IAppSettings,
+): Promise<IActionResult<boolean>> => {
+  const minimum = DOWNLOAD_CONCURRENCY_OPTIONS[0];
+  const maximum =
+    DOWNLOAD_CONCURRENCY_OPTIONS[DOWNLOAD_CONCURRENCY_OPTIONS.length - 1];
+  const requestedMax = Number.isFinite(newSettings.maxConcurrent)
+    ? Math.trunc(newSettings.maxConcurrent)
+    : minimum;
+  const normalizedSettings = {
+    ...newSettings,
+    maxConcurrent: Math.min(
+      maximum,
+      Math.max(minimum, requestedMax),
+    ),
+  };
+
+  console.info("[settings] updateAllSettings", normalizedSettings);
+  setSettings(normalizedSettings);
+  const [result, backendResult] = await Promise.all([
+    saveSettings(normalizedSettings),
+    setDownloadConcurrency(normalizedSettings.maxConcurrent),
+  ]);
 
   if (!result.success) {
     showAlert("Error al guardar", result.error, "error");
   }
+  if (!backendResult.success) {
+    showAlert("Error de configuración", backendResult.error, "error");
+  }
+
+  const errors = [result.error, backendResult.error].filter(
+    (error): error is string => Boolean(error),
+  );
+  return {
+    success: result.success && backendResult.success,
+    data: true,
+    error: errors.length > 0 ? errors.join(" ") : undefined,
+  };
 };
 
 export const updateSetting = async <K extends keyof IAppSettings>(

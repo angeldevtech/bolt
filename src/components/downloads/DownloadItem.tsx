@@ -72,7 +72,13 @@ export function DownloadItem(props: IDownloadItemProps) {
   const handleCancel = async () => {
     const result = await cancelDownload(props.item.id);
     if (result.success) {
-      showAlert("Cancelación solicitada", "La descarga se marcará como cancelada cuando termine el proceso.", "info");
+      showAlert(
+        "Cancelación solicitada",
+        isPending()
+          ? "La descarga en cola se cancelará sin iniciar el proceso."
+          : "La descarga se marcará como cancelada cuando termine el proceso.",
+        "info",
+      );
     } else {
       showAlert("No se pudo cancelar", result.error, "error");
     }

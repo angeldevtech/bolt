@@ -46,6 +46,24 @@ bun install
 bun run tauri dev
 ```
 
+## Critical Verification
+
+Run regression tests before every release build:
+
+```powershell
+bun run release:check
+```
+
+This runs frontend tests, Rust tests, and the production Tauri build in order.
+
+Manual smoke checklist against the generated release build:
+
+- Complete one real `yt-dlp` download.
+- Cancel immediately after starting a download.
+- Cancel during FFmpeg post-processing.
+- Open a completed file, reveal it in its folder, and move it to the trash.
+- Confirm the installer contains `yt-dlp.exe`, `ffmpeg.exe`, and `deno.exe`.
+
 ## Build
 
 Run commands from Bolt repository root, same folder as `package.json`.
@@ -55,6 +73,17 @@ Install dependencies first:
 ```powershell
 bun install --frozen-lockfile --ignore-scripts
 ```
+
+Before a clean build, provision pinned Windows sidecars:
+
+```powershell
+bun run prepare:binaries
+```
+
+`bun run build:tauri` runs this check automatically through Tauri's
+`beforeBuildCommand`. A mismatched existing executable stops the build instead
+of being replaced. Use the explicit `-Refresh` option only when intentionally
+accepting a manifest update.
 
 ### Production build
 
@@ -121,4 +150,6 @@ sources and licensing obligations.
 
 ## License
 
-AGPL-3.0 © 2026 angeldevtech
+Bolt source code is licensed under GNU AGPLv3-only © 2026 angeldevtech. See
+[LICENSE](LICENSE). Bundled executables retain their own licenses; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

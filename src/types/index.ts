@@ -24,6 +24,10 @@ export interface IProgressPayload {
   progress: number;
 }
 
+export interface IStartedPayload {
+  id: string;
+}
+
 export interface ICompletePayload {
   id: string;
   filePath: string;
@@ -43,7 +47,21 @@ export interface IActionResult<T> {
   data?: T;
 }
 
+export type TYtDlpCheckResultStatus = "current" | "available" | "different";
+export type TYtDlpUpdateCheckStatus =
+  | "unchecked"
+  | "checking"
+  | TYtDlpCheckResultStatus
+  | "check-failed";
+
+export interface IYtDlpUpdateCheckResult {
+  status: TYtDlpCheckResultStatus;
+  currentVersion: string;
+  latestVersion: string;
+}
+
 export interface IYtDlpUpdateResult {
   updated: boolean;
+  currentVersion: string;
   output: string;
 }

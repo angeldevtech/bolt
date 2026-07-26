@@ -1,4 +1,4 @@
-import { createSignal, onMount, lazy, Suspense } from "solid-js";
+import { createSignal, onCleanup, onMount, lazy, Suspense } from "solid-js";
 import { FileMusic, FilePlay, Hd } from "lucide-solid";
 import { UrlInput } from "./components/ui/UrlInput";
 import { Button } from "./components/ui/Button";
@@ -6,9 +6,20 @@ import { Footer } from "./components/layout/Footer";
 import { DownloadList } from "./components/downloads/DownloadList";
 import { SettingsModal } from "./components/settings/SettingsModal";
 import { GlobalToaster, showAlert } from "./components/ui/Toaster";
-import type { TFormat } from "./types";
-import { pasteFromClipboard, startDownload } from "./lib/api";
-import { setupDownloadListeners } from "./lib/events";
+import type {
+  IActionResult,
+  IYtDlpUpdateCheckResult,
+  TFormat,
+  TYtDlpUpdateCheckStatus,
+} from "./types";
+import {
+  checkYtDlpUpdate,
+  pasteFromClipboard,
+  startDownload,
+} from "./lib/api";
+import {
+  createDownloadListenerLifecycle,
+} from "./lib/events";
 import { initSettings, settings } from "./store/settings";
 import {
   initDownloads,
@@ -20,40 +31,115 @@ const UpdateModal = lazy(() => import("./components/update/UpdateModal"));
 
 export default function App() {
   const [url, setUrl] = createSignal("");
+  const [isReady, setIsReady] = createSignal(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = createSignal(false);
-  const [isUpdateAvailable, setIsUpdateAvailable] = createSignal(false);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = createSignal(false);
+  const [updateCheckStatus, setUpdateCheckStatus] =
+    createSignal<TYtDlpUpdateCheckStatus>("unchecked");
+  const [updateCheckResult, setUpdateCheckResult] =
+    createSignal<IYtDlpUpdateCheckResult>();
+  const [updateCheckError, setUpdateCheckError] = createSignal("");
+  let isDisposed = false;
+  const listenerLifecycle = createDownloadListenerLifecycle();
+
+  onCleanup(() => {
+    isDisposed = true;
+    listenerLifecycle.dispose();
+  });
+
+  const runUpdateCheck = async (): Promise<
+    IActionResult<IYtDlpUpdateCheckResult>
+  > => {
+    setUpdateCheckStatus("checking");
+    setUpdateCheckError("");
+
+    const result = await checkYtDlpUpdate();
+    if (result.success && result.data) {
+      setUpdateCheckResult(result.data);
+      setUpdateCheckStatus(result.data.status);
+    } else {
+      setUpdateCheckResult(undefined);
+      setUpdateCheckStatus("check-failed");
+      setUpdateCheckError(
+        result.error || "No se pudo comprobar la versión de yt-dlp.",
+      );
+    }
+
+    return result;
+  };
 
   onMount(async () => {
     await initSettings();
-    await initDownloads();
-    // Update action performs its own read-only check before changing yt-dlp.
-    setIsUpdateAvailable(true);
+    if (isDisposed) return;
 
-    setupDownloadListeners({
-      onProgress: (payload) =>
-        updateDownloadStatus(payload.id, {
-          progress: payload.progress,
-          ...(downloads.find(d => d.id === payload.id)?.status === "pending"
-            ? { status: "downloading" }
-            : {}),
-        }),
-      onComplete: (payload) =>
-        updateDownloadStatus(payload.id, {
-          status: "completed",
-          filePath: payload.filePath,
-          sizeMB: payload.sizeMB,
-        }),
-      onError: (payload) =>
-        (updateDownloadStatus(payload.id, {
+    await initDownloads();
+    if (isDisposed) return;
+
+    await listenerLifecycle.start({
+      onStarted: (payload) => {
+        if (isDisposed) return;
+        if (downloads.find((download) => download.id === payload.id)?.status === "pending") {
+          void updateDownloadStatus(payload.id, { status: "downloading" });
+        }
+      },
+      onProgress: (payload) => {
+        if (isDisposed) return;
+        const status = downloads.find((download) => download.id === payload.id)?.status;
+        if (status === "pending" || status === "downloading") {
+          void updateDownloadStatus(payload.id, {
+            progress: payload.progress,
+            ...(status === "pending" ? { status: "downloading" } : {}),
+          });
+        }
+      },
+      onComplete: (payload) => {
+        if (isDisposed) return;
+        const status = downloads.find((download) => download.id === payload.id)?.status;
+        if (status === "pending" || status === "downloading") {
+          void updateDownloadStatus(payload.id, {
+            status: "completed",
+            filePath: payload.filePath,
+            sizeMB: payload.sizeMB,
+          });
+        }
+      },
+      onError: async (payload) => {
+        if (isDisposed) return;
+        const status = downloads.find((download) => download.id === payload.id)?.status;
+        if (status !== "pending" && status !== "downloading") return;
+        const updated = await updateDownloadStatus(payload.id, {
           status: payload.cancelled ? "cancelled" : "error",
           errorMsg: payload.errorMsg,
-        }), showAlert("Error de descarga", payload.errorMsg, "error")),
+        });
+        if (isDisposed) return;
+        if (updated.data && !payload.cancelled) {
+          showAlert("Error de descarga", payload.errorMsg, "error");
+        }
+      },
     });
+
+    if (isDisposed) {
+      return;
+    }
+
+    setIsReady(true);
+
+    if (isDisposed) return;
+    void runUpdateCheck();
   });
 
   const hasActiveDownloads = () =>
     downloads.some((d) => d.status === "downloading" || d.status === "pending");
+
+  const handleOpenUpdate = () => {
+    setIsUpdateModalOpen(true);
+    if (
+      updateCheckStatus() !== "available" &&
+      updateCheckStatus() !== "checking"
+    ) {
+      void runUpdateCheck();
+    }
+  };
 
   const handlePaste = async () => {
     const result = await pasteFromClipboard();
@@ -75,14 +161,14 @@ export default function App() {
       );
       return;
     }
-    const tempId = crypto.randomUUID();
+    const id = crypto.randomUUID();
     const outputDir = format === "mp3" ? settings.audioFolder : settings.videoFolder;
     if (!outputDir) {
       showAlert("Carpeta no configurada", "Configura la carpeta de descarga en Ajustes.", "error");
       return;
     }
-    addDownload({
-      id: tempId,
+    await addDownload({
+      id,
       url: currentUrl,
       title: "Cargando...",
       format: format as TFormat,
@@ -91,13 +177,23 @@ export default function App() {
     });
     setUrl("");
 
-    const result = await startDownload(currentUrl, format as TFormat, outputDir);
-    if (result.id && result.title) {
-      updateDownloadStatus(tempId, { id: result.id, title: result.title, status: "downloading" });
+    const result = await startDownload(id, currentUrl, format as TFormat, outputDir);
+    if (result.id === id && result.title) {
+      void updateDownloadStatus(id, { title: result.title });
     } else {
       const errorMessage = result.error?.trim() || "Error desconocido";
-      updateDownloadStatus(tempId, { status: "error", errorMsg: errorMessage });
-      showAlert("Error de descarga", errorMessage, "error");
+      const isCancellation = errorMessage.toLowerCase().includes("cancelada");
+      if (downloads.find((download) => download.id === id)?.status === "pending") {
+        if (isCancellation) {
+          void updateDownloadStatus(id, {
+            status: "cancelled",
+            errorMsg: errorMessage,
+          });
+          return;
+        }
+        void updateDownloadStatus(id, { status: "error", errorMsg: errorMessage });
+        showAlert("Error de descarga", errorMessage, "error");
+      }
     }
   };
 
@@ -108,7 +204,11 @@ export default function App() {
           <UrlInput value={url()} onInput={setUrl} onPasteClick={handlePaste} />
 
           <div class="grid grid-cols-3 gap-3">
-            <Button variant="gradient" onClick={() => handleDownload("mp3")}>
+            <Button
+              variant="gradient"
+              disabled={!isReady()}
+              onClick={() => handleDownload("mp3")}
+            >
               <FileMusic
                 size={20}
                 class="group-hover:scale-110 transition-transform"
@@ -118,7 +218,11 @@ export default function App() {
               </span>
             </Button>
 
-            <Button variant="gradient" onClick={() => handleDownload("mp4")}>
+            <Button
+              variant="gradient"
+              disabled={!isReady()}
+              onClick={() => handleDownload("mp4")}
+            >
               <FilePlay
                 size={20}
                 class="group-hover:scale-110 transition-transform"
@@ -128,7 +232,11 @@ export default function App() {
               </span>
             </Button>
 
-            <Button variant="gradient" onClick={() => handleDownload("mp4-hd")}>
+            <Button
+              variant="gradient"
+              disabled={!isReady()}
+              onClick={() => handleDownload("mp4-hd")}
+            >
               <Hd
                 size={20}
                 class="group-hover:scale-110 transition-transform"
@@ -156,7 +264,10 @@ export default function App() {
             isOpen={isUpdateModalOpen()}
             onOpenChange={setIsUpdateModalOpen}
             hasActiveDownloads={hasActiveDownloads()}
-            onUpdateSuccess={() => setIsUpdateAvailable(false)}
+            checkStatus={updateCheckStatus()}
+            checkResult={updateCheckResult()}
+            checkError={updateCheckError()}
+            onCheck={runUpdateCheck}
           />
         )}
       </Suspense>
@@ -164,8 +275,8 @@ export default function App() {
       {/* Footer to open Settings */}
       <Footer
         onOpenSettings={() => setIsSettingsModalOpen(true)}
-        isUpdateAvailable={isUpdateAvailable()}
-        onOpenUpdate={() => setIsUpdateModalOpen(true)}
+        updateStatus={updateCheckStatus()}
+        onOpenUpdate={handleOpenUpdate}
       />
 
       {/* Global Toaster Mount Point */}
