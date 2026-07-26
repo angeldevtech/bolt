@@ -3,6 +3,11 @@ use tauri_plugin_log::{Target, TargetKind};
 use tokio::sync::Mutex;
 
 mod commands;
+#[cfg(windows)]
+mod context_menu;
+
+#[cfg(windows)]
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -40,6 +45,16 @@ pub fn run() {
                 log_builder = log_builder.target(Target::new(TargetKind::Stdout));
             }
             app.handle().plugin(log_builder.build())?;
+
+            #[cfg(windows)]
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = context_menu::setup(&window) {
+                    log::error!("Failed to access main WebView for context-menu filter: {error}");
+                }
+            } else {
+                log::error!("Main WebView not found; context-menu filter was not registered");
+            }
+
             Ok(())
         })
         .build(tauri::generate_context!())
