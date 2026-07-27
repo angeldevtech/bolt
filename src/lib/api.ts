@@ -22,6 +22,8 @@ import {
   type IActionResult,
   type IYtDlpUpdateCheckResult,
   type IYtDlpUpdateResult,
+  type IPlaylistMetadata,
+  type IPlaylistBatchPayload,
 } from "../types";
 import {
   DEFAULT_MAX_CONCURRENT,
@@ -188,6 +190,50 @@ export async function openInFolder(
     return { success: true };
   } catch (error) {
     return { success: false, error: String(error) };
+  }
+}
+
+// --- PLAYLIST COMMANDS ---
+
+export async function inspectPlaylist(
+  playlistId: string,
+  requestId: string,
+): Promise<IActionResult<IPlaylistMetadata>> {
+  try {
+    const result = await invoke<IPlaylistMetadata>("inspect_playlist", {
+      playlistId,
+      requestId,
+    });
+    return { success: true, data: result };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function cancelPlaylistInspection(
+  requestId: string,
+): Promise<void> {
+  try {
+    await invoke("cancel_playlist_inspection", { requestId });
+  } catch {
+    // Best effort
+  }
+}
+
+export async function queuePlaylistBatch(
+  payload: IPlaylistBatchPayload,
+): Promise<IActionResult<boolean>> {
+  try {
+    await invoke("queue_playlist_batch", { payload });
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 

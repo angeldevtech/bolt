@@ -1,8 +1,13 @@
 import { createStore } from "solid-js/store";
-import { loadHistorySafe, saveHistory, startDownload } from "../lib/api";
+import { loadHistorySafe, saveHistory, startDownload, queuePlaylistBatch, cancelDownload } from "../lib/api";
 import { settings } from "./settings";
 import { showAlert } from "../components/ui/Toaster";
-import type { IActionResult, IDownloadItem } from "../types";
+import type {
+  IActionResult,
+  IDownloadItem,
+  IPlaylistBatchPayload,
+  IPlaylistQueueEntry,
+} from "../types";
 import { shouldPersistDownloadUpdate } from "./download-persistence";
 
 export const [downloads, setDownloads] = createStore<IDownloadItem[]>([]);
@@ -36,8 +41,6 @@ async function persistCurrentHistory(): Promise<IActionResult<boolean>> {
   if (!result.success) {
     reportHistoryPersistenceFailure(result.error);
   }
-
-  // `data` indicates that in-memory state was updated even when disk persistence failed.
   return { ...result, data: true };
 }
 
@@ -72,9 +75,14 @@ export const initDownloads = async () => {
 export const addDownload = async (
   item: IDownloadItem,
 ): Promise<IActionResult<boolean>> => {
-  // Put new downloads at the top of the list
   setDownloads((prev) => [item, ...prev]);
-  // Save to disk immediately so if it crashes, we don't lose the record
+  return await persistCurrentHistory();
+};
+
+export const addDownloads = async (
+  items: IDownloadItem[],
+): Promise<IActionResult<boolean>> => {
+  setDownloads((prev) => [...items, ...prev]);
   return await persistCurrentHistory();
 };
 
@@ -102,7 +110,6 @@ export const updateDownloadStatus = async (
     (d) => ({ ...d, ...updates }),
   );
 
-  // Persist status/title and terminal metadata, but exclude progress-only ticks.
   if (shouldPersistDownloadUpdate(updates)) {
     return await persistCurrentHistory();
   }
@@ -150,12 +157,22 @@ export const retryDownload = async (
 
   const newItem: IDownloadItem = {
     id: newId,
-    url: item.url, title: item.title,
-    format: item.format, status: "pending", progress: 0,
+    url: item.url,
+    title: item.title,
+    format: item.format,
+    status: "pending",
+    progress: 0,
+    videoId: item.videoId,
+    groupId: item.groupId,
+    playlistId: item.playlistId,
+    playlistTitle: item.playlistTitle,
+    playlistDescription: item.playlistDescription,
+    playlistThumbnailUrl: item.playlistThumbnailUrl,
   };
 
-  // Replace both rows in memory and persist one snapshot, avoiding an intermediate retry state.
-  setDownloads((prev) => [newItem, ...prev.filter((download) => download.id !== id)]);
+  setDownloads((prev) =>
+    prev.map((download) => (download.id === id ? newItem : download)),
+  );
   const historyResult = await persistCurrentHistory();
 
   const result = await startDownload(newId, item.url, item.format, outputDir);
@@ -180,3 +197,183 @@ export const retryDownload = async (
 
   return historyResult.success ? transitionResult : historyResult;
 };
+
+// --- GROUP OPERATIONS ---
+
+export function getGroupedDownloads() {
+  const groups = new Map<string, IDownloadItem[]>();
+  const ungrouped: IDownloadItem[] = [];
+
+  for (const item of downloads) {
+    if (item.groupId) {
+      const existing = groups.get(item.groupId);
+      if (existing) {
+        existing.push(item);
+      } else {
+        groups.set(item.groupId, [item]);
+      }
+    } else {
+      ungrouped.push(item);
+    }
+  }
+
+  return { groups, ungrouped };
+}
+
+export function getGroupChildren(groupId: string): IDownloadItem[] {
+  return downloads.filter((d) => d.groupId === groupId);
+}
+
+export async function cancelGroup(
+  groupId: string,
+): Promise<IActionResult<boolean>> {
+  const children = downloads.filter(
+    (d) => d.groupId === groupId && (d.status === "pending" || d.status === "downloading"),
+  );
+
+  if (children.length === 0) {
+    return { success: true, data: true };
+  }
+
+  let allSuccess = true;
+  for (const child of children) {
+    const result = await cancelDownload(child.id);
+    if (!result.success) allSuccess = false;
+  }
+
+  return { success: allSuccess, data: allSuccess };
+}
+
+export async function retryGroup(
+  groupId: string,
+): Promise<IActionResult<boolean>> {
+  const children = downloads.filter(
+    (d) => d.groupId === groupId && (d.status === "error" || d.status === "cancelled"),
+  );
+
+  if (children.length === 0) {
+    return { success: true, data: true };
+  }
+
+  const firstChild = children[0];
+  const playlistId = firstChild.playlistId;
+  if (!playlistId || children.some((item) => !item.videoId || !item.playlistId)) {
+    return {
+      success: false,
+      data: false,
+      error: "La playlist no tiene información suficiente para reintentar.",
+    };
+  }
+
+  const newItems = new Map<string, IDownloadItem>();
+  const entries: IPlaylistQueueEntry[] = [];
+
+  for (const item of children) {
+    const newId = crypto.randomUUID();
+    const outputDir = item.format === "mp3" ? settings.audioFolder : settings.videoFolder;
+    if (!outputDir) {
+      showAlert("Carpeta no configurada", "Configura la carpeta de descarga en Ajustes.", "error");
+      return {
+        success: false,
+        data: false,
+        error: "No hay una carpeta de descarga configurada.",
+      };
+    }
+
+    const newItem: IDownloadItem = {
+      id: newId,
+      url: item.url,
+      title: item.title,
+      format: item.format,
+      status: "pending",
+      progress: 0,
+      videoId: item.videoId,
+      groupId: item.groupId,
+      playlistId: item.playlistId,
+      playlistTitle: item.playlistTitle,
+      playlistDescription: item.playlistDescription,
+      playlistThumbnailUrl: item.playlistThumbnailUrl,
+    };
+    newItems.set(item.id, newItem);
+    entries.push({
+      id: newId,
+      videoId: item.videoId!,
+      format: item.format,
+      outputDir,
+      title: item.title,
+    });
+  }
+
+  setDownloads((prev) => prev.map((item) => newItems.get(item.id) || item));
+  const historyResult = await persistCurrentHistory();
+
+  const result = await queuePlaylistBatch({
+    entries,
+    groupId,
+    playlistId,
+    playlistTitle: firstChild.playlistTitle || "Playlist",
+    playlistDescription: firstChild.playlistDescription,
+    playlistThumbnailUrl: firstChild.playlistThumbnailUrl,
+  });
+
+  if (!result.success) {
+    const errorMessage = result.error || "No se pudieron reintentar las descargas.";
+    setDownloads((prev) =>
+      prev.map((item) =>
+        newItems.has(item.id) && item.status === "pending"
+          ? { ...item, status: "error", errorMsg: errorMessage }
+          : item,
+      ),
+    );
+    await persistCurrentHistory();
+    showAlert("Error", errorMessage, "error");
+  }
+
+  return historyResult.success ? result : historyResult;
+}
+
+export async function startPlaylistBatch(
+  payload: IPlaylistBatchPayload,
+): Promise<IActionResult<boolean>> {
+  if (payload.entries.length === 0) {
+    return {
+      success: false,
+      data: false,
+      error: "No hay videos disponibles para encolar.",
+    };
+  }
+
+  const items: IDownloadItem[] = payload.entries.map((entry) => ({
+    id: entry.id,
+    url: `https://www.youtube.com/watch?v=${entry.videoId}`,
+    title: entry.title,
+    format: entry.format,
+    status: "pending",
+    progress: 0,
+    videoId: entry.videoId,
+    groupId: payload.groupId,
+    playlistId: payload.playlistId,
+    playlistTitle: payload.playlistTitle,
+    playlistDescription: payload.playlistDescription,
+    playlistThumbnailUrl: payload.playlistThumbnailUrl,
+  }));
+
+  setDownloads((prev) => [...items, ...prev]);
+  const historyResult = await persistCurrentHistory();
+
+  const result = await queuePlaylistBatch(payload);
+  if (!result.success) {
+    const errorMessage = result.error || "Error desconocido";
+    setDownloads((prev) =>
+      prev.map((item) =>
+        items.some((queuedItem) => queuedItem.id === item.id) && item.status === "pending"
+          ? { ...item, status: "error", errorMsg: errorMessage }
+          : item,
+      ),
+    );
+    await persistCurrentHistory();
+    showAlert("Error al encolar playlist", errorMessage, "error");
+  }
+
+  return historyResult.success ? result : historyResult;
+}

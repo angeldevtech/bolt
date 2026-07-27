@@ -2,6 +2,8 @@ use std::sync::Arc;
 use tauri_plugin_log::{Target, TargetKind};
 use tokio::sync::Mutex;
 
+#[cfg(all(windows, not(debug_assertions), not(feature = "diagnostic")))]
+mod browser_accelerators;
 mod commands;
 #[cfg(windows)]
 mod context_menu;
@@ -22,7 +24,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .manage(app_state)
-        .invoke_handler(tauri::generate_handler![
+.invoke_handler(tauri::generate_handler![
             commands::downloads::start_download,
             commands::downloads::cancel_download,
             commands::downloads::set_download_concurrency,
@@ -31,6 +33,9 @@ pub fn run() {
             commands::files::delete_to_trash,
             commands::updater::check_yt_dlp_update,
             commands::updater::perform_yt_dlp_update,
+            commands::playlists::inspect_playlist,
+            commands::playlists::cancel_playlist_inspection,
+            commands::playlists::queue_playlist_batch,
         ])
         .setup(|app| {
             let level = if cfg!(feature = "diagnostic") || cfg!(debug_assertions) {
@@ -50,6 +55,13 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 if let Err(error) = context_menu::setup(&window) {
                     log::error!("Failed to access main WebView for context-menu filter: {error}");
+                }
+
+                #[cfg(all(windows, not(debug_assertions), not(feature = "diagnostic")))]
+                if let Err(error) = browser_accelerators::disable(&window) {
+                    log::error!(
+                        "Failed to access main WebView for accelerator-key configuration: {error}"
+                    );
                 }
             } else {
                 log::error!("Main WebView not found; context-menu filter was not registered");

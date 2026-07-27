@@ -4,6 +4,7 @@ import { UrlInput } from "./components/ui/UrlInput";
 import { Button } from "./components/ui/Button";
 import { Footer } from "./components/layout/Footer";
 import { DownloadList } from "./components/downloads/DownloadList";
+import { PlaylistModal } from "./components/playlists/PlaylistModal";
 import { SettingsModal } from "./components/settings/SettingsModal";
 import { GlobalToaster, showAlert } from "./components/ui/Toaster";
 import type {
@@ -11,6 +12,8 @@ import type {
   IYtDlpUpdateCheckResult,
   TFormat,
   TYtDlpUpdateCheckStatus,
+  IYouTubeSource,
+  IPlaylistMetadata,
 } from "./types";
 import {
   checkYtDlpUpdate,
@@ -26,7 +29,9 @@ import {
   addDownload,
   downloads,
   updateDownloadStatus,
+  startPlaylistBatch,
 } from "./store/downloads";
+import { classifyUrl } from "./lib/youtube";
 const UpdateModal = lazy(() => import("./components/update/UpdateModal"));
 
 export default function App() {
@@ -39,6 +44,9 @@ export default function App() {
   const [updateCheckResult, setUpdateCheckResult] =
     createSignal<IYtDlpUpdateCheckResult>();
   const [updateCheckError, setUpdateCheckError] = createSignal("");
+  const [isPlaylistModalOpen, setIsPlaylistModalOpen] = createSignal(false);
+  const [pendingFormat, setPendingFormat] = createSignal<TFormat>("mp3");
+  const [pendingSource, setPendingSource] = createSignal<IYouTubeSource | null>(null);
   let isDisposed = false;
   const listenerLifecycle = createDownloadListenerLifecycle();
 
@@ -98,6 +106,7 @@ export default function App() {
         if (status === "pending" || status === "downloading") {
           void updateDownloadStatus(payload.id, {
             status: "completed",
+            progress: 100,
             filePath: payload.filePath,
             sizeMB: payload.sizeMB,
           });
@@ -151,33 +160,8 @@ export default function App() {
     }
   };
 
-  const handleDownload = async (format: string) => {
-    const currentUrl = url();
-    if (!currentUrl) {
-      showAlert(
-        "Enlace requerido",
-        "Por favor ingresa un enlace de YouTube válido.",
-        "error",
-      );
-      return;
-    }
-    const id = crypto.randomUUID();
-    const outputDir = format === "mp3" ? settings.audioFolder : settings.videoFolder;
-    if (!outputDir) {
-      showAlert("Carpeta no configurada", "Configura la carpeta de descarga en Ajustes.", "error");
-      return;
-    }
-    await addDownload({
-      id,
-      url: currentUrl,
-      title: "Cargando...",
-      format: format as TFormat,
-      status: "pending",
-      progress: 0,
-    });
-    setUrl("");
-
-    const result = await startDownload(id, currentUrl, format as TFormat, outputDir);
+  const doSingleDownload = async (id: string, url: string, format: TFormat, outputDir: string) => {
+    const result = await startDownload(id, url, format as TFormat, outputDir);
     if (result.id === id && result.title) {
       void updateDownloadStatus(id, { title: result.title });
     } else {
@@ -197,9 +181,130 @@ export default function App() {
     }
   };
 
+  const handleDownload = async (format: string) => {
+    const currentUrl = url();
+    if (!currentUrl) {
+      showAlert(
+        "Enlace requerido",
+        "Por favor ingresa un enlace de YouTube válido.",
+        "error",
+      );
+      return;
+    }
+
+    const parsed = classifyUrl(currentUrl);
+    if ("error" in parsed) {
+      showAlert("URL inválida", parsed.error, "error");
+      return;
+    }
+
+    // For plain video or generic URLs, use the existing single-item flow.
+    if (parsed.type === "video" || parsed.type === "generic") {
+      const id = crypto.randomUUID();
+      const outputDir = format === "mp3" ? settings.audioFolder : settings.videoFolder;
+      if (!outputDir) {
+        showAlert("Carpeta no configurada", "Configura la carpeta de descarga en Ajustes.", "error");
+        return;
+      }
+
+      await addDownload({
+        id,
+        url: parsed.canonicalUrl || currentUrl,
+        title: "Cargando...",
+        format: format as TFormat,
+        status: "pending",
+        progress: 0,
+        videoId: parsed.videoId,
+      });
+      setUrl("");
+
+      await doSingleDownload(id, parsed.canonicalUrl, format as TFormat, outputDir);
+      return;
+    }
+
+    // For playlist/radio/ambiguous, show the modal.
+    setPendingFormat(format as TFormat);
+    setPendingSource(parsed);
+    setIsPlaylistModalOpen(true);
+  };
+
+  const handleStartVideoOnly = async (format: TFormat) => {
+    const currentUrl = url();
+    const parsed = pendingSource();
+    if (!parsed) return;
+
+    const videoUrl = parsed.canonicalUrl || currentUrl;
+    const id = crypto.randomUUID();
+    const outputDir = format === "mp3" ? settings.audioFolder : settings.videoFolder;
+    if (!outputDir) {
+      showAlert("Carpeta no configurada", "Configura la carpeta de descarga en Ajustes.", "error");
+      return;
+    }
+
+    await addDownload({
+      id,
+      url: videoUrl,
+      title: "Cargando...",
+      format,
+      status: "pending",
+      progress: 0,
+      videoId: parsed.videoId,
+    });
+    setUrl("");
+
+    await doSingleDownload(id, videoUrl, format, outputDir);
+  };
+
+  const handleStartPlaylist = async (
+    source: IYouTubeSource,
+    metadata: IPlaylistMetadata,
+    format: TFormat,
+  ) => {
+    if (!source.playlistId) return;
+
+    if (metadata.entries.length === 0) {
+      showAlert(
+        "Playlist sin videos disponibles",
+        "No hay videos disponibles para descargar en esta playlist.",
+        "error",
+      );
+      return;
+    }
+
+    const outputDir = format === "mp3" ? settings.audioFolder : settings.videoFolder;
+    if (!outputDir) {
+      showAlert("Carpeta no configurada", "Configura la carpeta de descarga en Ajustes.", "error");
+      return;
+    }
+
+    const groupId = crypto.randomUUID();
+
+    const result = await startPlaylistBatch({
+      entries: metadata.entries.map((entry) => ({
+        id: crypto.randomUUID(),
+        videoId: entry.videoId,
+        format,
+        outputDir,
+        title: entry.title,
+      })),
+      groupId,
+      playlistId: source.playlistId,
+      playlistTitle: metadata.title,
+      playlistDescription: metadata.description,
+      playlistThumbnailUrl: metadata.thumbnailUrl,
+    });
+
+    if (!result.success) {
+      showAlert("Error", result.error || "No se pudo iniciar la playlist.", "error");
+      return;
+    }
+
+    setUrl("");
+  };
+
   return (
     <div class="flex flex-col h-full w-full relative">
-      <main class="flex-1 flex flex-col px-6 lg:px-10 xl:px-16 pt-6 pb-0 w-full gap-6 overflow-hidden">
+      <main class="min-h-0 flex-1 flex flex-col px-6 lg:px-10 xl:px-16 pt-6 pb-0 w-full gap-6 overflow-hidden">
         <section class="flex flex-col gap-4 shrink-0">
           <UrlInput value={url()} onInput={setUrl} onPasteClick={handlePaste} />
 
@@ -250,6 +355,16 @@ export default function App() {
 
         <DownloadList downloads={downloads} />
       </main>
+
+      {/* Playlist Modal */}
+      <PlaylistModal
+        isOpen={isPlaylistModalOpen()}
+        onOpenChange={setIsPlaylistModalOpen}
+        url={url()}
+        format={pendingFormat()}
+        onStartVideo={handleStartVideoOnly}
+        onStartPlaylist={handleStartPlaylist}
+      />
 
       {/* Render Settings Modal */}
       <SettingsModal

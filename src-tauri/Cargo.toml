@@ -36,6 +36,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 uuid = { version = "1", features = ["v4"] }
 trash = "5"
 tokio = { version = "1", features = ["process", "sync", "io-util"] }
+url = "2"
+regex-lite = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "=0.38.2"

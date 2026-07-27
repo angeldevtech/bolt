@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, Command};
 use tokio::sync::Notify;
 
@@ -15,6 +15,7 @@ pub(super) const OUTPUT_READER_TIMEOUT: Duration = Duration::from_secs(2);
 pub(super) const TOOL_VALIDATION_TIMEOUT: Duration = Duration::from_secs(15);
 pub(super) const UPDATE_PROCESS_TIMEOUT: Duration = Duration::from_secs(90);
 pub(super) const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+const MAX_COMMAND_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 
 #[cfg(windows)]
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
@@ -357,6 +358,47 @@ pub(super) async fn run_managed_command(
     run_managed_command_inner(command, control, timeout, |_, _| {}).await
 }
 
+async fn read_bounded<R: AsyncRead + Unpin>(mut reader: R) -> (io::Result<usize>, Vec<u8>) {
+    let mut output = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    let mut total = 0_usize;
+    let mut exceeded = false;
+
+    loop {
+        let read = match reader.read(&mut buffer).await {
+            Ok(read) => read,
+            Err(error) => return (Err(error), output),
+        };
+        if read == 0 {
+            break;
+        }
+
+        total = total.saturating_add(read);
+        if output.len() < MAX_COMMAND_OUTPUT_BYTES {
+            let remaining = MAX_COMMAND_OUTPUT_BYTES - output.len();
+            output.extend_from_slice(&buffer[..read.min(remaining)]);
+        }
+        if total > MAX_COMMAND_OUTPUT_BYTES {
+            exceeded = true;
+        }
+    }
+
+    if exceeded {
+        (
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "la salida del proceso excedió {} bytes",
+                    MAX_COMMAND_OUTPUT_BYTES
+                ),
+            )),
+            output,
+        )
+    } else {
+        (Ok(total), output)
+    }
+}
+
 #[cfg(test)]
 pub(super) async fn run_managed_command_cancelled_after_spawn(
     command: Command,
@@ -400,7 +442,7 @@ where
     };
     control.set_process_owner(owner);
 
-    let mut stdout = match child.stdout.take() {
+    let stdout = match child.stdout.take() {
         Some(stdout) => stdout,
         None => {
             let _ = terminate_managed_child(&mut child, &control).await;
@@ -408,7 +450,7 @@ where
             return Err("El proceso auxiliar no expuso stdout".into());
         }
     };
-    let mut stderr = match child.stderr.take() {
+    let stderr = match child.stderr.take() {
         Some(stderr) => stderr,
         None => {
             let _ = terminate_managed_child(&mut child, &control).await;
@@ -418,14 +460,10 @@ where
     };
 
     let stdout_task = tokio::spawn(async move {
-        let mut output = Vec::new();
-        let result = stdout.read_to_end(&mut output).await;
-        (result, output)
+        read_bounded(stdout).await
     });
     let stderr_task = tokio::spawn(async move {
-        let mut output = Vec::new();
-        let result = stderr.read_to_end(&mut output).await;
-        (result, output)
+        read_bounded(stderr).await
     });
 
     let wait_result = match timeout {

@@ -12,7 +12,7 @@ export function Footer(props: IFooterProps) {
   const isChecking = () => props.updateStatus === "checking";
 
   return (
-    <footer class="h-12 shrink-0 bg-surface-lowest flex items-center justify-between px-6 lg:px-10 xl:px-16 text-[0.65rem] font-bold tracking-wider uppercase z-10 relative border-t border-surface-low/50">
+    <footer class="h-12 shrink-0 bg-transparent flex items-center justify-between px-6 lg:px-10 xl:px-16 text-[0.65rem] font-bold tracking-wider uppercase z-10 relative border-t border-surface-low/50">
       <button
         onClick={props.onOpenSettings}
         class="flex items-center gap-2 text-on-surface-muted hover:text-white transition-colors"

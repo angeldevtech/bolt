@@ -15,15 +15,19 @@ import { Button } from "../ui/Button";
 import { openFile, openInFolder, deleteToTrash, cancelDownload } from "../../lib/api";
 import { retryDownload, removeDownload } from "../../store/downloads";
 import { showAlert } from "../ui/Toaster";
+import { getYouTubeThumbnailUrl } from "../../lib/youtube";
 
-function getYouTubeThumbnail(url: string): string | null {
+function getThumbnailUrl(item: IDownloadItem): string | null {
+  if (item.videoId) {
+    return getYouTubeThumbnailUrl(item.videoId);
+  }
   const patterns = [
     /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
-    /^([a-zA-Z0-9_-]{11})$/
+    /^([a-zA-Z0-9_-]{11})$/,
   ];
   for (const p of patterns) {
-    const m = url.match(p);
-    if (m) return `https://img.youtube.com/vi/${m[1]}/mqdefault.jpg`;
+    const m = item.url.match(p);
+    if (m) return getYouTubeThumbnailUrl(m[1]);
   }
   return null;
 }
@@ -84,14 +88,14 @@ export function DownloadItem(props: IDownloadItemProps) {
     }
   };
 
-  const thumbnailUrl = createMemo(() => getYouTubeThumbnail(props.item.url));
+  const thumbnailUrl = createMemo(() => getThumbnailUrl(props.item));
 
   return (
     <div
       class={`flex items-center gap-4 bg-surface-low rounded-2xl p-2 pr-4 ${isError() || isCancelled() ? "opacity-90 grayscale-20" : ""}`}
     >
       {/* Thumbnail Left Side */}
-      <div class="relative w-40 h-24 rounded-xl overflow-hidden shrink-0 bg-surface-lowest">
+      <div class="relative w-40 h-22.5 rounded-xl overflow-hidden shrink-0 bg-surface-lowest">
         {thumbnailUrl() && (
           <img
             src={thumbnailUrl()!}

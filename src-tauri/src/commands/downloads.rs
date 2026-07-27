@@ -21,6 +21,7 @@ use super::types::{
     CompletePayload, DownloadTaskOutcome, ErrorPayload, ProgressPayload, QueuedDownload,
     ResolvedTools, StartDownloadResult, StartedPayload,
 };
+use super::youtube;
 
 fn sanitized_url(url: &str) -> String {
     url.split('?').next().unwrap_or(url).to_string()
@@ -77,10 +78,31 @@ pub async fn start_download(
         return Err("ID de descarga vacío".into());
     }
 
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        info!("start_download: invalid URL, returning error");
-        return Err("URL inválida. Debe comenzar con http:// o https://".into());
+    if format != "mp3" && format != "mp4" && format != "mp4-hd" {
+        return Err("Formato de descarga no válido".into());
     }
+    if output_dir.trim().is_empty() {
+        return Err("Directorio de salida vacío".into());
+    }
+
+    // Validate and canonicalize YouTube URLs at the Rust boundary.
+    let canonical_url = match youtube::classify_url(&url) {
+        Ok(source) => {
+            match source.source_type {
+                youtube::YouTubeSourceType::Generic => source.canonical_url,
+                youtube::YouTubeSourceType::Radio => {
+                    return Err("No se puede descargar un mix o radio de YouTube.".into());
+                }
+                youtube::YouTubeSourceType::Playlist => {
+                    return Err("Usa la función de playlist para descargar una lista de reproducción.".into());
+                }
+                youtube::YouTubeSourceType::VideoPlusPlaylist | youtube::YouTubeSourceType::Video => {
+                    source.canonical_url
+                }
+            }
+        }
+        Err(error) => return Err(error),
+    };
 
     let control = Arc::new(JobControl::default());
     {
@@ -99,7 +121,7 @@ pub async fn start_download(
         }
         manager.queued_jobs.push_back(QueuedDownload {
             id: id.clone(),
-            url: url.clone(),
+            url: canonical_url.clone(),
             format: format.clone(),
             output_dir: output_dir.clone(),
             control: control.clone(),
@@ -130,8 +152,9 @@ pub async fn start_download(
             .arg(deno_runtime_arg(&tools.deno))
             .arg("--encoding")
             .arg("utf-8")
+            .arg("--no-playlist")
             .arg("--get-title")
-            .arg(&url);
+            .arg(&canonical_url);
         let title = match run_managed_command(
             command,
             control.clone(),
@@ -282,6 +305,7 @@ pub(super) fn spawn_download_task(
                 .arg(&output_path_str)
                 .arg("--print")
                 .arg("after_move:__BOLT_FILE__%(filepath)s")
+                .arg("--no-playlist")
                 .arg(&url);
 
             for arg in &extra_args {

@@ -76,6 +76,9 @@ impl DownloadManager {
         if operation == YtDlpOperation::Update && self.has_download_activity() {
             return Err("No se puede actualizar mientras haya descargas activas.".into());
         }
+        if operation == YtDlpOperation::Update && !self.helper_jobs.is_empty() {
+            return Err("No se puede actualizar mientras haya operaciones de yt-dlp activas.".into());
+        }
 
         self.yt_dlp_operation = Some(operation);
         self.helper_jobs.insert(helper_key, control);

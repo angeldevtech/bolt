@@ -298,6 +298,22 @@ fn updater_observes_preparing_and_cancelling_downloads() {
 }
 
 #[test]
+fn updater_blocks_active_playlist_inspection() {
+    let mut manager = DownloadManager::default();
+    manager
+        .helper_jobs
+        .insert("playlist-inspection".into(), Arc::new(JobControl::default()));
+
+    assert!(manager
+        .begin_yt_dlp_operation(
+            YtDlpOperation::Update,
+            "update".into(),
+            Arc::new(JobControl::default()),
+        )
+        .is_err());
+}
+
+#[test]
 fn updater_observes_download_registered_before_preparation() {
     let mut manager = DownloadManager::default();
     manager.queued_jobs.push_back(queued_job("preparing", None));
@@ -738,4 +754,170 @@ fn cancellation_during_suspended_spawn_is_reaped_after_job_ownership() {
             "suspended child should be gone after ownership handoff cancellation"
         );
     });
+}
+
+// --- YouTube URL validation tests ---
+
+use super::youtube;
+
+#[test]
+fn test_youtube_classify_video() {
+    let source = youtube::classify_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ").unwrap();
+    assert_eq!(source.source_type, youtube::YouTubeSourceType::Video);
+    assert_eq!(source.canonical_url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+}
+
+#[test]
+fn test_youtube_classify_playlist() {
+    let source = youtube::classify_url("https://www.youtube.com/playlist?list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf").unwrap();
+    assert_eq!(source.source_type, youtube::YouTubeSourceType::Playlist);
+    assert_eq!(
+        source.canonical_url,
+        "https://www.youtube.com/playlist?list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf"
+    );
+}
+
+#[test]
+fn test_youtube_classify_video_plus_playlist() {
+    let source = youtube::classify_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf").unwrap();
+    assert_eq!(source.source_type, youtube::YouTubeSourceType::VideoPlusPlaylist);
+    assert_eq!(source.canonical_url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+}
+
+#[test]
+fn test_youtube_classify_radio() {
+    let source = youtube::classify_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDMMabc").unwrap();
+    assert_eq!(source.source_type, youtube::YouTubeSourceType::Radio);
+    assert_eq!(source.canonical_url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+}
+
+#[test]
+fn test_youtube_classify_youtu_be() {
+    let source = youtube::classify_url("https://youtu.be/dQw4w9WgXcQ").unwrap();
+    assert_eq!(source.source_type, youtube::YouTubeSourceType::Video);
+    assert_eq!(source.canonical_url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+}
+
+#[test]
+fn test_youtube_classify_shorts() {
+    let source = youtube::classify_url("https://www.youtube.com/shorts/dQw4w9WgXcQ").unwrap();
+    assert_eq!(source.source_type, youtube::YouTubeSourceType::Video);
+    assert_eq!(source.canonical_url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+}
+
+#[test]
+fn test_youtube_classify_embed() {
+    let source = youtube::classify_url("https://www.youtube.com/embed/dQw4w9WgXcQ").unwrap();
+    assert_eq!(source.source_type, youtube::YouTubeSourceType::Video);
+    assert_eq!(source.canonical_url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+}
+
+#[test]
+fn test_youtube_classify_generic() {
+    let source = youtube::classify_url("https://vimeo.com/123456").unwrap();
+    assert_eq!(source.source_type, youtube::YouTubeSourceType::Generic);
+}
+
+#[test]
+fn test_youtube_music_host() {
+    let source = youtube::classify_url("https://music.youtube.com/watch?v=dQw4w9WgXcQ").unwrap();
+    assert_eq!(source.source_type, youtube::YouTubeSourceType::Video);
+}
+
+#[test]
+fn test_youtube_reject_duplicate_params() {
+    assert!(youtube::classify_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ&v=abc").is_err());
+    assert!(youtube::classify_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=a&list=b").is_err());
+}
+
+#[test]
+fn test_youtube_reject_invalid_video_id() {
+    assert!(youtube::classify_url("https://www.youtube.com/watch?v=tooshort").is_err());
+}
+
+#[test]
+fn test_youtube_reject_credentials() {
+    assert!(youtube::classify_url("https://user:pass@www.youtube.com/watch?v=dQw4w9WgXcQ").is_err());
+}
+
+#[test]
+fn test_youtube_validate_playlist_id() {
+    assert!(youtube::validate_playlist_id("PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf"));
+    assert!(youtube::validate_playlist_id("RDMMabc"));
+    assert!(youtube::validate_playlist_id("RDabc"));
+    assert!(!youtube::validate_playlist_id(""));
+    assert!(!youtube::validate_playlist_id("invalid id with spaces"));
+}
+
+#[test]
+fn test_youtube_canonical_video_url() {
+    assert_eq!(
+        youtube::canonical_video_url("dQw4w9WgXcQ"),
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    );
+}
+
+#[test]
+fn test_youtube_strips_index_and_tracking() {
+    let source = youtube::classify_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ&index=2&si=abc123&pp=ygUJdGVzdF9pZHg%3D").unwrap();
+    assert_eq!(source.source_type, youtube::YouTubeSourceType::Video);
+    assert_eq!(source.canonical_url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+}
+
+// --- Playlist management tests ---
+
+#[test]
+fn test_begin_and_finish_playlist_inspection() {
+    let mut manager = DownloadManager::default();
+    let control = Arc::new(JobControl::default());
+    manager
+        .begin_playlist_inspection("req-1", control.clone())
+        .expect("inspection should start");
+    assert!(manager.helper_jobs.contains_key("req-1"));
+    manager.finish_playlist_inspection("req-1");
+    assert!(!manager.helper_jobs.contains_key("req-1"));
+}
+
+#[test]
+fn test_begin_playlist_inspection_rejects_update_blocked() {
+    let mut manager = DownloadManager::default();
+    manager.yt_dlp_operation = Some(super::types::YtDlpOperation::Update);
+    assert!(manager
+        .begin_playlist_inspection("req-1", Arc::new(JobControl::default()))
+        .is_err());
+}
+
+#[test]
+fn test_begin_playlist_inspection_rejects_duplicate_request_id() {
+    let mut manager = DownloadManager::default();
+    let control = Arc::new(JobControl::default());
+    manager
+        .begin_playlist_inspection("req-1", control.clone())
+        .expect("first inspection should start");
+    assert!(manager
+        .begin_playlist_inspection("req-1", Arc::new(JobControl::default()))
+        .is_err());
+}
+
+#[test]
+fn test_validate_thumbnail_url() {
+    assert!(youtube::validate_thumbnail_url("https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg"));
+    assert!(youtube::validate_thumbnail_url("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"));
+    assert!(!youtube::validate_thumbnail_url("http://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg"));
+    assert!(!youtube::validate_thumbnail_url("https://evil.com/vi/dQw4w9WgXcQ/mqdefault.jpg"));
+}
+
+#[test]
+fn test_playlist_batch_payload_validation() {
+    assert!(youtube::validate_video_id("dQw4w9WgXcQ"));
+    assert!(!youtube::validate_video_id(""));
+    assert!(!youtube::validate_video_id("tooshort"));
+    assert!(!youtube::validate_video_id("invalid!id@123"));
+}
+
+#[test]
+fn test_http_canonicalized_to_https() {
+    let source = youtube::classify_url("http://www.youtube.com/watch?v=dQw4w9WgXcQ").unwrap();
+    assert_eq!(source.source_type, youtube::YouTubeSourceType::Video);
+    assert_eq!(source.canonical_url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
 }

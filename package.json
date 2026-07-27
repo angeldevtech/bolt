@@ -11,7 +11,7 @@
     "build:tauri": "bun run tauri build",
     "build:tauri:diagnostic": "bun run tauri build -- --features diagnostic",
     "build": "bun run build:check && bun run build:vite",
-    "test:frontend": "bun test tests/frontend/critical-regression.test.ts && vitest run --config vitest.config.ts tests/frontend/update-modal.test.ts",
+    "test:frontend": "bun test tests/frontend/critical-regression.test.ts && vitest run --config vitest.config.ts tests/frontend/update-modal.test.ts && vitest run --config vitest.config.ts tests/frontend/playlist-flow.test.ts",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --lib",
     "test:critical": "bun run test:frontend && bun run test:rust",
     "release:check": "bun run test:critical && bun run build:tauri",

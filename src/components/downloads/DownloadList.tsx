@@ -1,7 +1,9 @@
 import { createSignal, createMemo, For, Show } from "solid-js";
 import { X } from "lucide-solid";
 import { DownloadItem } from "./DownloadItem";
+import { PlaylistDownloadGroup } from "./PlaylistDownloadGroup";
 import { FilterPopover } from "./FilterPopover";
+import { getGroupedDownloads } from "../../store/downloads";
 import { type IDownloadItem, type TFormat, type TDownloadStatus } from "../../types";
 
 interface IDownloadListProps {
@@ -28,15 +30,42 @@ export function DownloadList(props: IDownloadListProps) {
     new Set(),
   );
 
-  const filteredDownloads = createMemo(() =>
-    props.downloads.filter((d) => {
-      const formats = formatFilter();
-      const statuses = statusFilter();
-      if (formats.size > 0 && !formats.has(d.format)) return false;
-      if (statuses.size > 0 && !statuses.has(d.status)) return false;
+  const groupedData = createMemo(() => getGroupedDownloads());
+
+  const filteredGrouped = createMemo(() => {
+    const formatSet = formatFilter();
+    const statusSet = statusFilter();
+    const { groups } = groupedData();
+
+    const result: Array<{ type: "group"; groupId: string; children: IDownloadItem[] }> = [];
+
+    for (const [groupId, children] of groups) {
+      if (formatSet.size === 0 && statusSet.size === 0) {
+        result.push({ type: "group", groupId, children });
+      } else {
+        const filtered = children.filter((d) => {
+          if (formatSet.size > 0 && !formatSet.has(d.format)) return false;
+          if (statusSet.size > 0 && !statusSet.has(d.status)) return false;
+          return true;
+        });
+        if (filtered.length > 0) {
+          result.push({ type: "group", groupId, children: filtered });
+        }
+      }
+    }
+
+    return result;
+  });
+
+  const filteredUngrouped = createMemo(() => {
+    const formatSet = formatFilter();
+    const statusSet = statusFilter();
+    return groupedData().ungrouped.filter((d) => {
+      if (formatSet.size > 0 && !formatSet.has(d.format)) return false;
+      if (statusSet.size > 0 && !statusSet.has(d.status)) return false;
       return true;
-    }),
-  );
+    });
+  });
 
   const hasAnyFilter = () => formatFilter().size > 0 || statusFilter().size > 0;
 
@@ -91,6 +120,14 @@ export function DownloadList(props: IDownloadListProps) {
 
   const allChips = () => [...formatChips(), ...statusChips()];
 
+  const totalDisplayed = () => {
+    let count = filteredUngrouped().length;
+    for (const group of filteredGrouped()) {
+      count += group.children.length;
+    }
+    return count;
+  };
+
   return (
     <section class="flex-1 flex flex-col min-h-0">
       <div class="flex items-center justify-between pb-3 shrink-0 border-b border-surface-low mb-3">
@@ -99,7 +136,7 @@ export function DownloadList(props: IDownloadListProps) {
             Historial de Descargas
           </h2>
           <span class="bg-surface-highest text-on-surface-muted text-xs font-semibold px-2.5 py-0.5 rounded-full">
-            {props.downloads.length} items
+            {totalDisplayed()} items
           </span>
         </div>
         <FilterPopover
@@ -136,9 +173,9 @@ export function DownloadList(props: IDownloadListProps) {
         </div>
       </Show>
 
-      <div class="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar pb-6 flex flex-col gap-3">
+      <div class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar pb-6 flex flex-col gap-3">
         <Show
-          when={filteredDownloads().length > 0}
+          when={totalDisplayed() > 0}
           fallback={
             <Show when={hasAnyFilter()}>
               <div class="flex-1 flex items-center justify-center h-full">
@@ -157,7 +194,19 @@ export function DownloadList(props: IDownloadListProps) {
             </Show>
           }
         >
-          <For each={filteredDownloads()}>
+          {/* Groups */}
+          <For each={filteredGrouped()}>
+            {(group) => (
+              <PlaylistDownloadGroup
+                groupId={group.groupId}
+                children={group.children}
+                allDownloads={props.downloads}
+              />
+            )}
+          </For>
+
+          {/* Ungrouped */}
+          <For each={filteredUngrouped()}>
             {(item) => <DownloadItem item={item} />}
           </For>
         </Show>
